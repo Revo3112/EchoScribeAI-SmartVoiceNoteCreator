@@ -40,10 +40,6 @@ Here's a glimpse of the EchoScribe AI interface:
 ![EchoScribe AI Screenshot](https://via.placeholder.com/600x400.png?text=EchoScribe+AI+Application+Screenshot)
 *(Replace with a link to your application's screenshot)*
 
-Listen to an example of audio enhancement and transcription (if available):
-[Link to Audio Demo Example](https://example.com/audio_demo.mp3)
-*(Replace with a link to your audio demo)*
-
 ---
 
 ## Main Features
