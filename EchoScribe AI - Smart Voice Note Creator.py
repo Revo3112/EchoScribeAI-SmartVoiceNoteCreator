@@ -621,6 +621,9 @@ class VoiceToMarkdownApp:
             print(f"Error setting icon: {e}")
             pass
 
+        # ===== PERBAIKAN 1: Setup config management PERTAMA =====
+        self.setup_config_management()
+
         # Inisialisasi components lainnya
         self.recognizer = sr.Recognizer()
         self.microphones = self.get_available_microphones()
@@ -628,35 +631,44 @@ class VoiceToMarkdownApp:
         if self.microphones:
             self.selected_mic.set(self.microphones[0])
 
-        # Recording variables
+        # ===== PERBAIKAN 2: Inisialisasi variabel dengan nilai dari config =====
+        # Recording variables - gunakan nilai dari config
         self.use_system_audio = tk.BooleanVar(root)
-        self.use_system_audio.set(False)
+        self.use_system_audio.set(self.config.get("use_system_audio", False))
+
         self.use_dual_recording = tk.BooleanVar(root)
-        self.use_dual_recording.set(False)
+        self.use_dual_recording.set(self.config.get("use_dual_recording", False))
+
         self.recording_mode = tk.StringVar(self.root)
-        self.recording_mode.set("microphone")
+        self.recording_mode.set(self.config.get("recording_mode", "microphone"))
 
-        # File variables
+        # File variables - gunakan nilai dari config
         self.output_folder = tk.StringVar(root)
-        self.output_folder.set(os.path.expanduser("~/Documents"))
+        self.output_folder.set(self.config.get("output_folder", os.path.expanduser("~/Documents")))
+
         self.filename_prefix = tk.StringVar(root)
-        self.filename_prefix.set("catatan")
+        self.filename_prefix.set(self.config.get("filename_prefix", "catatan"))
 
-        # AI variables
+        # AI variables - gunakan nilai dari config
         self.language = tk.StringVar(root)
-        self.language.set("id-ID")
-        self.engine = tk.StringVar(root)
-        self.engine.set("Google")
-        self.use_ai_enhancement = tk.BooleanVar(root)
-        self.use_ai_enhancement.set(True)
-        self.use_economic_model = tk.BooleanVar(root)
-        self.use_economic_model.set(False)
+        self.language.set(self.config.get("language", "id-ID"))
 
-        # Recording state
+        self.engine = tk.StringVar(root)
+        self.engine.set(self.config.get("engine", "Google"))
+
+        self.use_ai_enhancement = tk.BooleanVar(root)
+        self.use_ai_enhancement.set(self.config.get("use_ai_enhancement", True))
+
+        self.use_economic_model = tk.BooleanVar(root)
+        self.use_economic_model.set(self.config.get("use_economic_model", False))
+
+        # Recording state - gunakan nilai dari config
         self.use_extended_recording = tk.BooleanVar(root)
-        self.use_extended_recording.set(True)
+        self.use_extended_recording.set(self.config.get("use_extended_recording", True))
+
         self.chunk_size = tk.IntVar(root)
-        self.chunk_size.set(600)
+        self.chunk_size.set(self.config.get("chunk_size", 600))
+
         self.recording = False
         self.recording_thread = None
         self.stop_recording_flag = False
@@ -674,12 +686,12 @@ class VoiceToMarkdownApp:
         self.button_hover = "#3A3A3A"
         self.border_color = "#3E3E3E"
 
-        # Processing variables
+        # Processing variables - gunakan nilai dari config
         self.processing_start_time = 0
         self.heading_spacing_before = 12
         self.heading_spacing_after = 6
         self.paragraph_spacing = 6
-        self.api_request_delay = 10
+        self.api_request_delay = self.config.get("api_request_delay", 10)
 
         # Error handling
         self.error_handler = None
@@ -693,7 +705,10 @@ class VoiceToMarkdownApp:
         # Setup UI
         self.setup_ui()
 
-        # Set up configuration and error handling
+        # ===== PERBAIKAN 3: Apply config SETELAH UI siap =====
+        self.root.after(100, self.apply_config_after_ui_ready)
+
+        # Set up error handling dan exit handler
         self.post_init_hook()
 
         if not ffmpeg_found:
@@ -1741,8 +1756,9 @@ class VoiceToMarkdownApp:
             logger.debug(f"Error in safe canvas draw: {e}")
 
     def _update_recording_mode(self):
-        """Update recording mode variables based on radio button selection"""
+        """PERBAIKAN: Update recording mode dengan validasi"""
         mode = self.recording_mode.get()
+        print(f"DEBUG: Switching to recording mode: {mode}")
 
         if mode == "microphone":
             self.use_system_audio.set(False)
@@ -1754,13 +1770,23 @@ class VoiceToMarkdownApp:
             self.use_system_audio.set(False)
             self.use_dual_recording.set(True)
 
-        # Update status
+        # Update status dengan info lebih detail
         mode_text = {
             "microphone": "Mikrofon saja",
             "system": "Audio sistem saja",
             "dual": "Mikrofon + Audio sistem"
         }
-        self.status_var.set(f"Mode recording: {mode_text.get(mode, 'Unknown')}")
+
+        status_text = f"Mode recording: {mode_text.get(mode, 'Unknown')}"
+        if hasattr(self, 'selected_mic'):
+            try:
+                mic_name = self.selected_mic.get().split(":")[1].strip()
+                status_text += f" | Mikrofon: {mic_name[:20]}..."
+            except:
+                pass
+
+        self.status_var.set(status_text)
+        print(f"DEBUG: Recording mode updated - use_system_audio: {self.use_system_audio.get()}, use_dual_recording: {self.use_dual_recording.get()}")
 
     def setup_settings_tab(self, parent):
         """Tab untuk pengaturan dengan tombol API key."""
@@ -2254,9 +2280,38 @@ class VoiceToMarkdownApp:
             self.recording = False
 
             self.record_button.configure(text="Mulai Rekaman", fg_color="#007ACC", hover_color="#0066AA")
-            self.status_var.set("Rekaman berhenti")
+            self.status_var.set("Memproses rekaman...")
 
-            self.root.after(500, self.process_recording)
+            # SOLUSI: Buat fungsi callback yang tepat
+            self.root.after(100, self.handle_recording_completion)
+
+    def handle_recording_completion(self):
+        """Handle completion of recording and start processing safely"""
+        try:
+            # Check if any audio data is available
+            has_audio = False
+
+            # Check for extended recording audio files
+            if self.use_extended_recording.get() and hasattr(self, 'temp_audio_files') and self.temp_audio_files:
+                has_audio = True
+                print(f"DEBUG: Found {len(self.temp_audio_files)} chunks for processing")
+
+            # Check for single recording file
+            elif hasattr(self, 'temp_wav_file') and self.temp_wav_file:
+                has_audio = True
+                print(f"DEBUG: Found recording file for processing: {self.temp_wav_file}")
+
+            # Start processing if we have audio data
+            if has_audio:
+                threading.Thread(target=self.process_audio_thread, daemon=True).start()
+            else:
+                self.status_var.set("Error: Tidak ada data audio")
+                print("ERROR: No audio data available for processing")
+
+        except Exception as e:
+            error_msg = str(e)
+            self.status_var.set(f"Error: {error_msg}")
+            print(f"Error in handle_recording_completion: {e}")
 
     def recording_thread_func(self):
         try:
@@ -3255,8 +3310,12 @@ class VoiceToMarkdownApp:
     def record_microphone_audio(self):
         """Record audio from the selected microphone"""
         try:
+            # Parse microphone index with better error handling
             try:
                 mic_index = int(self.selected_mic.get().split(":")[0])
+                mic_name = self.selected_mic.get().split(":", 1)[1].strip() if ":" in self.selected_mic.get() else "Unknown"
+                self.root.after(0, lambda: self.status_var.set(f"Initializing microphone: {mic_name}"))
+                print(f"DEBUG: Using microphone index {mic_index}: {mic_name}")
             except (ValueError, IndexError) as e:
                 print(f"Error parsing microphone index: {e}")
                 self.root.after(0, lambda: messagebox.showerror("Error", "Mikrofon tidak valid. Silakan pilih mikrofon yang tersedia."))
@@ -3265,89 +3324,179 @@ class VoiceToMarkdownApp:
                 self.root.after(0, lambda: self.status_var.set("Error"))
                 return
 
+            # Audio format configuration
             FORMAT = pyaudio.paInt16
             CHANNELS = 1
-            RATE = 16000
+            RATE = 16000  # Keeping your original rate
             CHUNK = 1024
 
+            # Initialize PyAudio
             audio = pyaudio.PyAudio()
 
+            # Validate microphone before opening stream
             try:
-                # Get device info
                 mic_info = audio.get_device_info_by_index(mic_index)
+                print(f"DEBUG: Microphone info: {mic_info}")
 
-                # Try mono first (standard for microphones)
-                stream = audio.open(
-                    format=FORMAT,
-                    channels=1,
-                    rate=RATE,
-                    input=True,
-                    input_device_index=mic_index,
-                    frames_per_buffer=CHUNK
-                )
-                CHANNELS = 1
+                # Verify microphone supports input
+                max_channels = int(mic_info.get('maxInputChannels', 0))
+                if max_channels < 1:
+                    raise Exception(f"Selected device doesn't support audio input: {mic_name}")
 
+                self.root.after(0, lambda: self.status_var.set(f"Microphone ready: {mic_name[:30]}..."))
             except Exception as e:
-                print(f"Error opening audio stream: {e}")
+                print(f"Error validating microphone: {e}")
                 self.root.after(0, lambda: messagebox.showerror(
                     "Error",
-                    f"Gagal membuka mikrofon: {mic_info['name'] if 'mic_info' in locals() else 'Unknown'}\n\n"
-                    f"Detail error: {e}"))
+                    f"Gagal memvalidasi mikrofon: {mic_name}\n\nDetail error: {e}\n\nCoba pilih mikrofon lain atau restart aplikasi."))
                 audio.terminate()
                 self.recording = False
                 self.root.after(0, lambda: self.record_button.configure(text="Mulai Rekaman"))
                 self.root.after(0, lambda: self.status_var.set("Error"))
                 return
 
+            # Open audio stream with error handling
+            try:
+                self.root.after(0, lambda: self.status_var.set("Opening audio stream..."))
+                stream = audio.open(
+                    format=FORMAT,
+                    channels=CHANNELS,
+                    rate=RATE,
+                    input=True,
+                    input_device_index=mic_index,
+                    frames_per_buffer=CHUNK
+                )
+
+                # Test the stream with a small read
+                test_data = stream.read(CHUNK, exception_on_overflow=False)
+                if not test_data or len(test_data) == 0:
+                    raise Exception("Test read returned no data")
+
+                print(f"DEBUG: Stream test successful, read {len(test_data)} bytes")
+                self.root.after(0, lambda: self.status_var.set("Recording from microphone..."))
+            except Exception as e:
+                print(f"Error opening audio stream: {e}")
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Gagal membuka aliran audio: {e}"))
+                audio.terminate()
+                self.recording = False
+                self.root.after(0, lambda: self.record_button.configure(text="Mulai Rekaman"))
+                self.root.after(0, lambda: self.status_var.set("Error"))
+                return
+
+            # Initialize recording variables
             frames = []
             chunk_start_time = time.time()
+            total_chunks = 0
+            error_count = 0
+            max_errors = 5  # Maximum consecutive errors before stopping
 
+            print(f"DEBUG: Starting recording with microphone index {mic_index}, RATE={RATE}, CHANNELS={CHANNELS}")
+            self.root.after(0, lambda: self.status_var.set(f"Recording from: {mic_name[:30]}..."))
+
+            # Main recording loop
             while not self.stop_recording_flag:
                 try:
                     data = stream.read(CHUNK, exception_on_overflow=False)
-                    frames.append(data)
 
-                    # PERBAIKAN: Send audio data ke queue untuk visualisasi dengan error handling
-                    if hasattr(self, 'audio_queue') and self.viz_enabled.get():
-                        try:
-                            # Convert bytes to numpy array untuk visualisasi
-                            audio_data = np.frombuffer(data, dtype=np.int16)
-                            # Use put_nowait to avoid blocking
-                            self.audio_queue.put_nowait(audio_data)
-                        except queue.Full:
-                            # Queue is full, skip this frame
-                            pass
-                        except Exception as viz_error:
-                            logger.debug(f"Visualization queue error: {viz_error}")
+                    if data and len(data) > 0:
+                        frames.append(data)
+                        total_chunks += 1
+                        error_count = 0  # Reset error counter on successful read
 
-                    if self.use_extended_recording.get():
-                        if time.time() - chunk_start_time >= self.chunk_size.get():
-                            self.save_audio_chunk(frames, RATE)
-                            frames = []
-                            chunk_start_time = time.time()
+                        # Update UI periodically
+                        if total_chunks % 20 == 0:
+                            seconds = int(total_chunks * CHUNK / RATE)
+                            self.root.after(0, lambda s=seconds:
+                                        self.status_var.set(f"Recording... ({s}s)"))
+
+                        # Log progress
+                        if len(frames) % 100 == 0:
+                            print(f"DEBUG: Collected {len(frames)} frames so far")
+
+                        # Handle visualization if available
+                        if hasattr(self, 'audio_queue') and hasattr(self, 'viz_enabled') and \
+                        self.viz_enabled.get() and total_chunks % 5 == 0:
+                            try:
+                                import numpy as np
+                                audio_data = np.frombuffer(data, dtype=np.int16)
+                                if len(audio_data) > 0 and self.audio_queue.qsize() < 10:
+                                    self.audio_queue.put_nowait(audio_data)
+                            except Exception as viz_error:
+                                # Silent fail for visualization - not critical
+                                pass
+
+                        # Handle extended recording chunking
+                        if self.use_extended_recording.get():
+                            if time.time() - chunk_start_time >= self.chunk_size.get():
+                                print(f"DEBUG: Saving chunk with {len(frames)} frames")
+                                self.save_audio_chunk(frames, RATE, CHANNELS, audio.get_sample_size(FORMAT))
+                                frames = []
+                                chunk_start_time = time.time()
+                    else:
+                        print("WARNING: Empty data read from microphone")
+                        error_count += 1
+
+                        if error_count >= max_errors:
+                            print(f"ERROR: Too many consecutive empty reads ({error_count})")
+                            break
+
                 except Exception as e:
                     print(f"Error during recording: {e}")
+                    error_count += 1
+
+                    if error_count >= max_errors:
+                        print(f"ERROR: Too many consecutive errors ({error_count})")
+                        break
+
+            # Recording finished or stopped
+            print(f"DEBUG: Recording stopped with {len(frames)} frames collected")
 
             if frames:
                 try:
                     if self.use_extended_recording.get():
-                        self.save_audio_chunk(frames, RATE)
+                        print(f"DEBUG: Saving final chunk with {len(frames)} frames")
+                        self.save_audio_chunk(frames, RATE, CHANNELS, audio.get_sample_size(FORMAT))
                     else:
-                        self.temp_wav_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-                        wf = wave.open(self.temp_wav_file.name, 'wb')
+                        # Create temp directory if needed
+                        if not hasattr(self, 'temp_dir') or not self.temp_dir:
+                            self.temp_dir = tempfile.mkdtemp()
+                            print(f"DEBUG: Created temp directory: {self.temp_dir}")
+
+                        # Use full path for temporary file
+                        temp_path = os.path.join(self.temp_dir, "recording.wav")
+                        print(f"DEBUG: Saving recording to: {temp_path}")
+
+                        # Create and save WAV file
+                        wf = wave.open(temp_path, 'wb')
                         wf.setnchannels(CHANNELS)
                         wf.setsampwidth(audio.get_sample_size(FORMAT))
                         wf.setframerate(RATE)
                         wf.writeframes(b''.join(frames))
                         wf.close()
+
+                        # Store path as string
+                        self.temp_wav_file = temp_path
+                        print(f"DEBUG: Recording saved to temporary file: {self.temp_wav_file}")
+
+                        # Verify the saved file
+                        if os.path.exists(self.temp_wav_file):
+                            file_size = os.path.getsize(self.temp_wav_file)
+                            duration = len(frames) * CHUNK / RATE
+                            print(f"DEBUG: WAV file size: {file_size} bytes, duration: {duration:.2f}s")
+
+                            if file_size < 1000:
+                                print("WARNING: Audio file is suspiciously small, might be empty")
                 except Exception as e:
                     print(f"Error saving audio: {e}")
-                    self.root.after(0, lambda: messagebox.showerror("Error", f"Gagal menyimpan audio: {e}"))
+                    error_msg = str(e)  # Capture the error message
+                    self.root.after(0, lambda err=error_msg: messagebox.showerror("Error", f"Gagal menyimpan audio: {err}"))
 
+            # Clean up audio resources
             try:
                 stream.stop_stream()
                 stream.close()
                 audio.terminate()
+                print("DEBUG: Audio resources successfully cleaned up")
             except Exception as e:
                 print(f"Error closing audio stream: {e}")
 
@@ -3495,36 +3644,50 @@ class VoiceToMarkdownApp:
             # Return first stream if mixing fails
             return data1
 
-    def save_audio_chunk(self, frames, rate):
+    def save_audio_chunk(self, frames, rate, channels=1, sample_width=2):
+        """Save audio chunk to a WAV file with proper parameters"""
         if not self.temp_dir:
+            print("DEBUG: Cannot save chunk - temp_dir not initialized")
             return
 
         temp_file = os.path.join(self.temp_dir, f"chunk_{len(self.temp_audio_files)}.wav")
         wf = wave.open(temp_file, 'wb')
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
+        wf.setnchannels(channels)  # Use provided channels parameter
+        wf.setsampwidth(sample_width)  # Use provided sample width
         wf.setframerate(rate)
         wf.writeframes(b''.join(frames))
         wf.close()
 
-        self.temp_audio_files.append(temp_file)
+        # Verifikasi file tersimpan dengan benar
+        file_size = os.path.getsize(temp_file)
+        print(f"DEBUG: Saving chunk to: {temp_file}, size: {file_size} bytes")
 
-    def process_recording(self):
-        self.status_var.set("Memproses rekaman...")
-        threading.Thread(target=self.process_audio_thread).start()
+        if file_size > 0:
+            self.temp_audio_files.append(temp_file)
+        else:
+            print(f"WARNING: Empty audio file generated: {temp_file}")
 
     def process_audio_thread(self):
         try:
-            if self.use_extended_recording.get() and self.temp_audio_files:
+            # PERBAIKAN: Log kondisi perekaman untuk debugging
+            print(f"DEBUG: Processing audio - Extended recording: {self.use_extended_recording.get()}")
+            print(f"DEBUG: Temp audio files: {len(self.temp_audio_files) if hasattr(self, 'temp_audio_files') else 'None'}")
+            print(f"DEBUG: Temp wav file: {self.temp_wav_file if hasattr(self, 'temp_wav_file') else 'None'}")
+
+            if self.use_extended_recording.get() and hasattr(self, 'temp_audio_files') and self.temp_audio_files:
+                print(f"DEBUG: Processing extended recording with {len(self.temp_audio_files)} chunks")
                 self.process_extended_recording_optimized()
-            elif self.temp_wav_file:
+            elif hasattr(self, 'temp_wav_file') and self.temp_wav_file:
+                print(f"DEBUG: Processing standard recording with file: {self.temp_wav_file}")
                 self.process_standard_recording_enhanced()
             else:
+                print("ERROR: No audio data available for processing")
                 self.root.after(0, lambda: messagebox.showwarning("Peringatan", "Tidak ada rekaman yang ditemukan untuk diproses."))
                 self.root.after(0, lambda: self.status_var.set("Siap"))
                 return
 
         except Exception as e:
+            print(f"ERROR: Exception in process_audio_thread: {e}")
             self.root.after(0, lambda: messagebox.showerror("Error", f"Terjadi kesalahan saat memproses: {e}"))
             self.root.after(0, lambda: self.status_var.set("Error"))
 
@@ -3536,10 +3699,25 @@ class VoiceToMarkdownApp:
             self.root.after(0, lambda: self.progress_var.set(0))
             self.root.after(0, lambda: self.status_var.set("Menganalisis audio..."))
 
-            # Deteksi konteks audio
-            audio_context = self.detect_audio_context(self.temp_wav_file.name)
+            # PERBAIKAN: Periksa apakah temp_wav_file adalah string (path) atau objek file
+            audio_file_path = self.temp_wav_file
+            if not isinstance(audio_file_path, str):
+                if hasattr(self.temp_wav_file, 'name'):
+                    audio_file_path = self.temp_wav_file.name
 
-            with sr.AudioFile(self.temp_wav_file.name) as source:
+            # PERBAIKAN: Verifikasi file ada sebelum diproses
+            if not os.path.exists(audio_file_path):
+                print(f"ERROR: Audio file not found: {audio_file_path}")
+                self.root.after(0, lambda: messagebox.showerror("Error", "File audio tidak ditemukan untuk diproses."))
+                self.root.after(0, lambda: self.status_var.set("Error: File tidak ditemukan"))
+                return
+
+            print(f"DEBUG: Processing audio file: {audio_file_path}")
+
+            # Deteksi konteks audio
+            audio_context = self.detect_audio_context(audio_file_path)
+
+            with sr.AudioFile(audio_file_path) as source:
                 self.recognizer.adjust_for_ambient_noise(source)
                 audio_data = self.recognizer.record(source)
 
@@ -3989,35 +4167,17 @@ class VoiceToMarkdownApp:
         return text
 
     def _cleanup_temp_files(self, processed_files):
-        """
-        Cleanup temporary files safely.
-        """
+        """Cleanup temporary files safely."""
+        print(f"DEBUG: Starting cleanup of {len(processed_files)} files")
         for file_path in processed_files:
-            if file_path in self.temp_audio_files:
+            if hasattr(self, 'temp_audio_files') and file_path in self.temp_audio_files:
                 try:
                     if os.path.exists(file_path):
                         os.unlink(file_path)
+                        print(f"DEBUG: Deleted temp file: {file_path}")
                     self.temp_audio_files.remove(file_path)
                 except Exception as e_clean:
-                    logger.error(f"Error cleaning temp file {file_path}: {e_clean}")
-
-        # Check if all files were processed
-        if not self.temp_audio_files and self.temp_dir and os.path.exists(self.temp_dir):
-            try:
-                os.rmdir(self.temp_dir)
-                self.temp_dir = None
-            except OSError as e_rmdir:
-                logger.error(f"Error removing temp dir {self.temp_dir}: {e_rmdir}")
-        elif self.temp_dir and os.path.exists(self.temp_dir) and not os.listdir(self.temp_dir):
-            try:
-                os.rmdir(self.temp_dir)
-                self.temp_dir = None
-            except OSError as e_rmdir:
-                logger.error(f"Error removing empty temp dir: {e_rmdir}")
-
-        # Reset for next run
-        if self.temp_dir and not os.path.exists(self.temp_dir):
-            self.temp_dir = None
+                    print(f"ERROR: Failed to clean temp file {file_path}: {e_clean}")
 
     def detect_audio_context(self, audio_file):
         """
@@ -4953,53 +5113,149 @@ class VoiceToMarkdownApp:
 
     def _process_large_document(self, text, max_length):
         """
-        Process a large document by splitting it into chunks
+        Process a large document by splitting it into chunks with robust error handling
         """
-        logger.info(f"Document text length ({len(text)} chars) exceeds limit for single cohesion call. Using intelligent adaptive chunking.")
-        self.root.after(0, lambda: self.status_var.set("Dokumen besar, memproses dengan teknik ekstraksi detail komprehensif..."))
+        try:
+            logger.info(f"Document text length ({len(text)} chars) exceeds limit for single cohesion call. Using intelligent adaptive chunking.")
+            self.root.after(0, lambda: self.status_var.set("Dokumen besar, memproses dengan teknik ekstraksi detail komprehensif..."))
 
-        # Step 1: Analyze document structure first to inform better chunking strategy
-        structure_analysis = {}
+            # Step 1: Analyze document structure first to inform better chunking strategy
+            try:
+                structure_analysis = {}
+                logger.info("Document structure analysis initialized")
+            except Exception as e:
+                logger.error(f"Error during document structure analysis: {e}")
+                structure_analysis = {}  # Fallback to empty structure
 
-        # Step 2: Split into chunks with context-aware boundaries
-        chunks = self._split_text_into_chunks(text, max_length)
+            # Step 2: Split into chunks with context-aware boundaries
+            try:
+                chunks = self._split_text_into_chunks(text, max_length)
+                logger.info(f"Document split into {len(chunks)} chunks successfully")
 
-        # Step 3: Create context overlaps between chunks to maintain continuity
-        context_chunks = self._create_context_chunks(chunks)
+                if not chunks:
+                    logger.warning("Chunking returned empty result, using fallback simple chunking")
+                    # Simple fallback chunking if the main method fails to produce chunks
+                    chunks = [text[i:i+max_length] for i in range(0, len(text), max_length)]
+            except Exception as e:
+                logger.error(f"Error splitting text into chunks: {e}")
+                # Fallback: simple text splitting
+                chunks = [text[i:i+max_length] for i in range(0, len(text), max_length)]
+                logger.info(f"Using fallback splitting, created {len(chunks)} chunks")
 
-        # Process each chunk with context awareness
-        enhanced_parts = []
-        num_chunks = len(context_chunks)
+            # Step 3: Create context overlaps between chunks to maintain continuity
+            try:
+                context_chunks = self._create_context_chunks(chunks)
+                logger.info(f"Created {len(context_chunks)} context-aware chunks")
+            except Exception as e:
+                logger.error(f"Error creating context chunks: {e}")
+                # Fallback: use chunks without context
+                context_chunks = [(chunk, {}) for chunk in chunks]
+                logger.info("Using fallback chunks without context")
 
-        for i, (chunk, context) in enumerate(context_chunks):
-            if not chunk.strip():  # Skip empty or whitespace-only chunks
-                continue
+            # Process each chunk with context awareness
+            enhanced_parts = []
+            num_chunks = len(context_chunks)
+            failed_chunks = []
 
-            # Update UI status with more informative message
-            chunk_size = len(chunk)
-            self.root.after(0, lambda j=i+1, total=num_chunks, c_size=chunk_size:
-                            self.status_var.set(f"Mengekstrak detail komprehensif dari bagian {j}/{total} ({c_size} karakter)..."))
+            for i, (chunk, context) in enumerate(context_chunks):
+                try:
+                    if not chunk.strip():  # Skip empty or whitespace-only chunks
+                        logger.debug(f"Skipping empty chunk {i+1}")
+                        continue
 
-            # Enhanced processing with context awareness
-            processed_chunk = self._enhance_chunk_with_context(chunk, context, i+1, num_chunks)
+                    # Update UI status with more informative message
+                    chunk_size = len(chunk)
+                    self.root.after(0, lambda j=i+1, total=num_chunks, c_size=chunk_size:
+                                    self.status_var.set(f"Mengekstrak detail komprehensif dari bagian {j}/{total} ({c_size} karakter)..."))
 
-            enhanced_parts.append(processed_chunk)
+                    # Enhanced processing with context awareness
+                    processed_chunk = self._enhance_chunk_with_context(chunk, context, i+1, num_chunks)
 
-            # Update progress bar with smoother progression
-            self.root.after(0, lambda current=i, total=num_chunks:
-                            self.progress_var.set(90 + ((current + 1) / total * 5)))
+                    # Validate processed chunk
+                    if processed_chunk and processed_chunk.strip():
+                        enhanced_parts.append(processed_chunk)
+                        logger.debug(f"Successfully processed chunk {i+1}/{num_chunks}")
+                    else:
+                        logger.warning(f"Chunk {i+1} returned empty result, using original")
+                        enhanced_parts.append(chunk)  # Use original if processing failed
+                        failed_chunks.append(i+1)
 
-        # Join all enhanced chunks with improved transitions
-        final_processed_text = self._join_with_transitions(enhanced_parts)
+                    # Update progress bar with smoother progression
+                    self.root.after(0, lambda current=i, total=num_chunks:
+                                    self.progress_var.set(90 + ((current + 1) / total * 5)))
 
-        logger.info("Completed detail-preserving enhancement of document chunks with semantic coherence.")
+                    # Optional API rate limiting delay
+                    if hasattr(self, 'api_request_delay') and self.api_request_delay > 0:
+                        time.sleep(self.api_request_delay)
 
-        # Final coherence pass with detail preservation focus
-        if len(final_processed_text) <= max_length and len(chunks) > 1:
-            self.root.after(0, lambda: self.status_var.set("Mengoptimalkan koherensi global dokumen dengan preservasi detail lengkap..."))
-            final_processed_text = self._enhance_final_document(final_processed_text)
+                except Exception as e:
+                    logger.error(f"Error processing chunk {i+1}: {e}")
+                    # Use original chunk as fallback if processing fails
+                    enhanced_parts.append(chunk)
+                    failed_chunks.append(i+1)
 
-        return final_processed_text
+                    # Update status but continue processing
+                    self.root.after(0, lambda j=i+1:
+                                self.status_var.set(f"Error pada bagian {j}, menggunakan teks asli..."))
+
+            # Join all enhanced chunks with improved transitions
+            try:
+                if not enhanced_parts:
+                    logger.warning("No enhanced parts were generated, returning original text")
+                    return text
+
+                final_processed_text = self._join_with_transitions(enhanced_parts)
+                logger.info("Successfully joined chunks with transitions")
+
+                if not final_processed_text or not final_processed_text.strip():
+                    logger.warning("Joined text is empty, using concatenated parts")
+                    final_processed_text = "\n\n".join(enhanced_parts)
+
+            except Exception as e:
+                logger.error(f"Error joining enhanced parts: {e}")
+                # Fallback: simple join
+                final_processed_text = "\n\n".join(enhanced_parts)
+                logger.info("Used fallback simple join method")
+
+            logger.info("Completed detail-preserving enhancement of document chunks with semantic coherence.")
+
+            # Final coherence pass with detail preservation focus
+            if len(final_processed_text) <= max_length and len(chunks) > 1:
+                try:
+                    self.root.after(0, lambda: self.status_var.set("Mengoptimalkan koherensi global dokumen dengan preservasi detail lengkap..."))
+                    enhanced_final = self._enhance_final_document(final_processed_text)
+
+                    # Validate enhanced final result
+                    if enhanced_final and enhanced_final.strip():
+                        final_processed_text = enhanced_final
+                        logger.info("Final document coherence enhancement completed")
+                    else:
+                        logger.warning("Final enhancement returned empty result, using pre-enhanced text")
+                except Exception as e:
+                    logger.error(f"Error in final document enhancement: {e}")
+                    # Keep the current joined text if final enhancement fails
+                    logger.info("Using joined text without final enhancement due to error")
+
+            # Log processing results
+            if failed_chunks:
+                logger.warning(f"Some chunks failed processing: {failed_chunks}")
+                logger.info(f"Processing summary: {len(enhanced_parts) - len(failed_chunks)}/{len(enhanced_parts)} chunks enhanced successfully")
+            else:
+                logger.info("All chunks processed successfully")
+
+            # Final validation before returning
+            if not final_processed_text or not final_processed_text.strip():
+                logger.warning("Final processed text is empty, returning original text")
+                return text
+
+            return final_processed_text
+
+        except Exception as e:
+            logger.error(f"Critical error in _process_large_document: {e}", exc_info=True)
+            self.root.after(0, lambda: self.status_var.set(f"Error pemrosesan dokumen: {str(e)[:50]}..."))
+
+            # Return original text as ultimate fallback
+            return text
 
     def _split_text_into_chunks(self, text, max_length):
         """Split text into chunks based on semantic boundaries"""
@@ -13552,9 +13808,9 @@ class VoiceToMarkdownApp:
     # !Security and setup methods
 
     def post_init_hook(self):
-        """Add security and error handling enhancements with visualization cleanup."""
+        """Enhanced post init with better error handling."""
         try:
-            # Set up error logging first
+            # Set up error logging
             self.setup_error_logging()
 
             # Check system compatibility
@@ -13573,66 +13829,58 @@ class VoiceToMarkdownApp:
                     f"Beberapa masalah terdeteksi:\n\n{warnings_text}"
                 )
 
-            # Set up configuration management
-            self.setup_config_management()
+            # Setup auto-save setiap 30 detik
+            self.setup_auto_save()
 
-            # Enhanced exit handler with visualization cleanup
+            # Enhanced exit handler
             def enhanced_on_exit():
                 try:
-                    logger.info("Starting application shutdown...")
+                    print("DEBUG: Starting enhanced cleanup...")
 
                     # Stop visualization thread
                     if hasattr(self, 'viz_running'):
                         self.viz_running = False
-                        logger.info("Stopping visualization thread...")
 
-                    # Wait for thread to finish (with timeout)
-                    if hasattr(self, 'viz_thread') and self.viz_thread.is_alive():
+                    # Wait for thread
+                    if hasattr(self, 'viz_thread') and self.viz_thread and self.viz_thread.is_alive():
                         self.viz_thread.join(timeout=1.0)
-                        if self.viz_thread.is_alive():
-                            logger.warning("Visualization thread did not stop gracefully")
-                        else:
-                            logger.info("Visualization thread stopped successfully")
 
-                    # Close matplotlib figure
+                    # Close matplotlib
                     if hasattr(self, 'viz_fig'):
                         try:
                             import matplotlib.pyplot as plt
                             plt.close(self.viz_fig)
-                            logger.info("Matplotlib figure closed")
-                        except Exception as e:
-                            logger.warning(f"Error closing matplotlib figure: {e}")
+                        except:
+                            pass
 
-                    # Stop any ongoing recording
+                    # Stop recording
                     if hasattr(self, 'recording') and self.recording:
-                        logger.info("Stopping ongoing recording...")
                         self.stop_recording()
 
                     # Save config
-                    self.save_config()
+                    save_success = self.save_config()
+                    print(f"DEBUG: Config save {'successful' if save_success else 'failed'}")
 
-                    # Perform cleanup
+                    # Cleanup
                     self.safe_cleanup()
 
-                    logger.info("Application shutdown completed successfully")
+                    print("DEBUG: Enhanced cleanup completed")
 
                 except Exception as e:
-                    logger.error(f"Error during enhanced cleanup: {e}")
+                    print(f"ERROR: Error during enhanced cleanup: {e}")
                 finally:
-                    # Ensure root window is destroyed no matter what
                     try:
                         self.root.destroy()
                     except:
                         pass
 
-            # Set up the enhanced cleanup handler
+            # Set exit handler
             self.root.protocol("WM_DELETE_WINDOW", enhanced_on_exit)
 
-            logger.info("Application initialized successfully with enhanced cleanup")
+            print("DEBUG: Post init hook completed successfully")
 
         except Exception as e:
-            logger.error(f"Error in post_init_hook: {e}")
-            # Fallback to original exit handler if enhanced setup fails
+            print(f"ERROR: Error in post_init_hook: {e}")
             self.add_exit_handler()
 
     def setup_error_logging(self):
@@ -13827,13 +14075,13 @@ class VoiceToMarkdownApp:
         return results
 
     def setup_config_management(self):
-        """Set up configuration management for persistent settings."""
+        """Set up configuration management untuk persistent settings."""
         # Define config file location
         config_dir = os.path.join(os.path.expanduser("~"), ".echoscribe")
         os.makedirs(config_dir, exist_ok=True)
         self.config_file = os.path.join(config_dir, "config.json")
 
-        # Default config
+        # ===== PERBAIKAN 4: Config yang lebih lengkap =====
         self.default_config = {
             "output_folder": os.path.expanduser("~/Documents"),
             "filename_prefix": "catatan",
@@ -13847,110 +14095,224 @@ class VoiceToMarkdownApp:
             "theme": "Dark",
             "last_microphone_index": 0,
             "recording_mode": "microphone",
+            "use_system_audio": False,
+            "use_dual_recording": False,
+            "window_geometry": "1000x1080",
+            "window_position": None,
+            "viz_mode": "waveform",
+            "viz_enabled": True,
+            "viz_sensitivity": 1.0
         }
 
         # Load config
         self.config = self.load_config()
-
-        # Apply loaded config
-        self.apply_config()
+        print(f"DEBUG: Config loaded: {self.config}")
 
     def load_config(self):
-        """
-        Load configuration from file.
-
-        Returns:
-            Dictionary containing configuration values
-        """
+        """Load configuration from file dengan error handling yang lebih baik."""
         config = self.default_config.copy()
 
         try:
             if os.path.exists(self.config_file):
-                with open(self.config_file, 'r') as f:
+                print(f"DEBUG: Loading config from: {self.config_file}")
+                with open(self.config_file, 'r', encoding='utf-8') as f:
                     loaded_config = json.load(f)
 
-                    # Update config with loaded values
-                    for key, value in loaded_config.items():
-                        if key in config:
-                            config[key] = value
+                # Validasi dan update config
+                for key, value in loaded_config.items():
+                    if key in self.default_config:
+                        config[key] = value
+                        print(f"DEBUG: Loaded {key} = {value}")
+                    else:
+                        print(f"DEBUG: Skipping unknown config key: {key}")
+
+                print(f"DEBUG: Successfully loaded {len(loaded_config)} config items")
+            else:
+                print(f"DEBUG: Config file not found, using defaults: {self.config_file}")
+
         except Exception as e:
-            logger.error(f"Error loading config: {e}")
+            print(f"ERROR: Error loading config: {e}")
             # Use defaults if loading fails
 
         return config
 
-    def save_config(self):
-        """
-        Save current configuration to file.
-        """
+    def apply_config_after_ui_ready(self):
+        """Apply configuration after UI is fully ready."""
         try:
-            # Update config from current values
-            self.config["output_folder"] = self.output_folder.get()
-            self.config["filename_prefix"] = self.filename_prefix.get()
-            self.config["language"] = self.language.get()
-            self.config["engine"] = self.engine.get()
-            self.config["use_ai_enhancement"] = self.use_ai_enhancement.get()
-            self.config["use_economic_model"] = self.use_economic_model.get()
-            self.config["use_extended_recording"] = self.use_extended_recording.get()
-            self.config["chunk_size"] = self.chunk_size.get()
-            self.config["api_request_delay"] = self.api_request_delay
-            self.config["theme"] = ctk.get_appearance_mode()
-            self.config["use_dual_recording"] = self.use_dual_recording.get()
-            self.config["recording_mode"] = self.recording_mode.get()
+            print("DEBUG: Applying config after UI ready...")
 
-            # Save microphone selection
-            if self.microphones:
-                try:
-                    mic_index = int(self.selected_mic.get().split(":")[0])
-                    self.config["last_microphone_index"] = mic_index
-                except:
-                    pass
-
-            # Write to file
-            with open(self.config_file, 'w') as f:
-                json.dump(self.config, f, indent=2)
-
-            logger.info("Configuration saved")
-
-        except Exception as e:
-            logger.error(f"Error saving config: {e}")
-            self.root.after(0, lambda: self.status_var.set("Gagal menyimpan konfigurasi"))
-
-    def apply_config(self):
-        """
-        Apply loaded configuration to the application.
-        """
-        try:
-            # Set values from config
-            self.output_folder.set(self.config["output_folder"])
-            self.filename_prefix.set(self.config["filename_prefix"])
-            self.language.set(self.config["language"])
-            self.engine.set(self.config["engine"])
-            self.use_ai_enhancement.set(self.config["use_ai_enhancement"])
-            self.use_economic_model.set(self.config["use_economic_model"])
-            self.use_extended_recording.set(self.config["use_extended_recording"])
-            if "recording_mode" in self.config:
-                self.recording_mode.set(self.config["recording_mode"])
-                self._update_recording_mode()  # Update variables sesuai mode
-            self.chunk_size.set(self.config["chunk_size"])
-            self.api_request_delay = self.config["api_request_delay"]
-
-            # Apply theme
-            ctk.set_appearance_mode(self.config["theme"])
-
-            # Apply microphone selection if available
-            if self.microphones:
+            # Apply microphone selection
+            if self.microphones and "last_microphone_index" in self.config:
                 last_index = self.config["last_microphone_index"]
                 for mic in self.microphones:
                     if mic.startswith(f"{last_index}:"):
                         self.selected_mic.set(mic)
+                        print(f"DEBUG: Applied microphone: {mic}")
                         break
 
-            logger.info("Configuration applied")
+            # Apply window geometry
+            if "window_geometry" in self.config:
+                try:
+                    self.root.geometry(self.config["window_geometry"])
+                    print(f"DEBUG: Applied window geometry: {self.config['window_geometry']}")
+                except:
+                    pass
+
+            # Apply window position if saved
+            if "window_position" in self.config and self.config["window_position"]:
+                try:
+                    x, y = self.config["window_position"]
+                    self.root.geometry(f"+{x}+{y}")
+                    print(f"DEBUG: Applied window position: {x}, {y}")
+                except:
+                    pass
+
+            # Apply theme
+            try:
+                ctk.set_appearance_mode(self.config.get("theme", "Dark"))
+                print(f"DEBUG: Applied theme: {self.config.get('theme', 'Dark')}")
+            except:
+                pass
+
+            # Apply visualization settings
+            if hasattr(self, 'viz_mode'):
+                self.viz_mode.set(self.config.get("viz_mode", "waveform"))
+                print(f"DEBUG: Applied viz_mode: {self.config.get('viz_mode', 'waveform')}")
+
+            if hasattr(self, 'viz_enabled'):
+                self.viz_enabled.set(self.config.get("viz_enabled", True))
+                print(f"DEBUG: Applied viz_enabled: {self.config.get('viz_enabled', True)}")
+
+            if hasattr(self, 'viz_sensitivity'):
+                self.viz_sensitivity.set(self.config.get("viz_sensitivity", 1.0))
+                print(f"DEBUG: Applied viz_sensitivity: {self.config.get('viz_sensitivity', 1.0)}")
+
+            # Update recording mode
+            self._update_recording_mode()
+
+            print("DEBUG: Config applied successfully!")
+            if hasattr(self, 'status_var'):
+                self.status_var.set("Konfigurasi dimuat")
 
         except Exception as e:
-            logger.error(f"Error applying config: {e}")
-            self.root.after(0, lambda: self.status_var.set("Gagal menerapkan konfigurasi"))
+            print(f"ERROR: Error applying config: {e}")
+
+    def save_config(self):
+        """Save current configuration dengan data yang lebih lengkap."""
+        try:
+            print("DEBUG: Saving configuration...")
+
+            # Update config dari current values
+            if hasattr(self, 'output_folder'):
+                self.config["output_folder"] = self.output_folder.get()
+            if hasattr(self, 'filename_prefix'):
+                self.config["filename_prefix"] = self.filename_prefix.get()
+            if hasattr(self, 'language'):
+                self.config["language"] = self.language.get()
+            if hasattr(self, 'engine'):
+                self.config["engine"] = self.engine.get()
+            if hasattr(self, 'use_ai_enhancement'):
+                self.config["use_ai_enhancement"] = self.use_ai_enhancement.get()
+            if hasattr(self, 'use_economic_model'):
+                self.config["use_economic_model"] = self.use_economic_model.get()
+            if hasattr(self, 'use_extended_recording'):
+                self.config["use_extended_recording"] = self.use_extended_recording.get()
+            if hasattr(self, 'chunk_size'):
+                self.config["chunk_size"] = self.chunk_size.get()
+            if hasattr(self, 'api_request_delay'):
+                self.config["api_request_delay"] = self.api_request_delay
+            if hasattr(self, 'use_dual_recording'):
+                self.config["use_dual_recording"] = self.use_dual_recording.get()
+            if hasattr(self, 'recording_mode'):
+                self.config["recording_mode"] = self.recording_mode.get()
+            if hasattr(self, 'use_system_audio'):
+                self.config["use_system_audio"] = self.use_system_audio.get()
+
+            # Save current theme
+            try:
+                self.config["theme"] = ctk.get_appearance_mode()
+            except:
+                self.config["theme"] = "Dark"
+
+            # Save window geometry dan position
+            try:
+                self.config["window_geometry"] = self.root.geometry()
+                # Parse position dari geometry string
+                geo = self.root.geometry()
+                if '+' in geo:
+                    pos_part = geo.split('+')[1:]
+                    if len(pos_part) >= 2:
+                        self.config["window_position"] = [int(pos_part[0]), int(pos_part[1])]
+            except:
+                pass
+
+            # Save visualization settings
+            if hasattr(self, 'viz_mode'):
+                self.config["viz_mode"] = self.viz_mode.get()
+            if hasattr(self, 'viz_enabled'):
+                self.config["viz_enabled"] = self.viz_enabled.get()
+            if hasattr(self, 'viz_sensitivity'):
+                self.config["viz_sensitivity"] = self.viz_sensitivity.get()
+
+            # Save microphone selection
+            if hasattr(self, 'microphones') and self.microphones:
+                try:
+                    current_mic = self.selected_mic.get()
+                    mic_index = int(current_mic.split(":")[0])
+                    self.config["last_microphone_index"] = mic_index
+                    print(f"DEBUG: Saved microphone index: {mic_index}")
+                except:
+                    pass
+
+            # Write to file dengan backup
+            backup_file = self.config_file + ".backup"
+
+            # Create backup of existing config
+            if os.path.exists(self.config_file):
+                try:
+                    import shutil
+                    shutil.copy2(self.config_file, backup_file)
+                except:
+                    pass
+
+            # Write new config
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=2, ensure_ascii=False)
+
+            print(f"DEBUG: Configuration saved to: {self.config_file}")
+            print(f"DEBUG: Saved config: {self.config}")
+
+            return True
+
+        except Exception as e:
+            print(f"ERROR: Error saving config: {e}")
+
+            # Restore from backup if save failed
+            backup_file = self.config_file + ".backup"
+            if os.path.exists(backup_file):
+                try:
+                    import shutil
+                    shutil.copy2(backup_file, self.config_file)
+                    print("DEBUG: Restored config from backup")
+                except:
+                    pass
+
+            return False
+
+    def setup_auto_save(self):
+        """Setup auto-save untuk config setiap 10 menit."""
+        def auto_save():
+            try:
+                self.save_config()
+                print("DEBUG: Auto-save completed")
+            except Exception as e:
+                print(f"ERROR: Auto-save failed: {e}")
+            finally:
+                # Schedule next auto-save
+                self.root.after(600000, auto_save)  # 10 minutes = 600,000 milliseconds
+
+        # Start auto-save
+        self.root.after(600000, auto_save)  # 10 minutes = 600,000 milliseconds
 
     def add_exit_handler(self):
         """
