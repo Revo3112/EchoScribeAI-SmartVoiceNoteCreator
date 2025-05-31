@@ -37,8 +37,9 @@
 
 Here's a glimpse of the EchoScribe AI interface:
 
-![EchoScribe AI Screenshot](https://via.placeholder.com/600x400.png?text=EchoScribe+AI+Application+Screenshot)
-*(Replace with a link to your application's screenshot)*
+![EchoScribe AI Screenshot](./Screenshoot/Main_display.png)
+![EchoScribe AI Screenshot](./Screenshoot/Output.png)
+![EchoScribe AI Screenshot](./Screenshoot/Settings.png)
 
 ---
 
