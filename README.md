@@ -1,7 +1,6 @@
 # EchoScribe AI - Smart Voice Note Creator
 
-![EchoScribe AI Logo](https://via.placeholder.com/300x150.png?text=EchoScribe+AI+Logo)
-*(Replace with a link to your application's logo)*
+![EchoScribe AI Logo](./icon.png)
 
 **EchoScribe AI** is an advanced desktop application designed to automatically transform your voice recordings into structured and professional text notes. Powered by cutting-edge AI technology, this application not only transcribes audio but also enhances, formats, and presents it in ready-to-use Word (.docx) documents.
 
