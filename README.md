@@ -38,7 +38,7 @@
 Here's a glimpse of the EchoScribe AI interface:
 
 ![EchoScribe AI Screenshot](./Screenshoot/Main_display.png)
-![EchoScribe AI Screenshot](./Screenshoot/Output.png)
+![EchoScribe AI Screenshot](./Screenshoot/Ouput.png)
 ![EchoScribe AI Screenshot](./Screenshoot/Settings.png)
 
 ---
