@@ -27,12 +27,14 @@ import platform
 import json
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import numpy as np
 import threading
 import queue
 import pyaudio
+import soundcard as sc
 try:
     import pyaudiowpatch as pyaudio
     PYAUDIOWPATCH_AVAILABLE = True
@@ -40,6 +42,8 @@ except ImportError:
     import pyaudio
     PYAUDIOWPATCH_AVAILABLE = False
     print("WARNING: PyAudioWPatch tidak tersedia. System audio recording tidak akan berfungsi optimal.")
+
+matplotlib.use('TkAgg')  # Set backend sebelum import pyplot
 
 warnings.filterwarnings("ignore", category=UserWarning, module="docx.styles.styles")
 
@@ -377,9 +381,7 @@ class APIKeyDialog(ctk.CTkToplevel):
         self.api_key = None
         self.result = None
 
-        # Center the dialog
         self.geometry(f"+{parent.winfo_rootx() + 50}+{parent.winfo_rooty() + 50}")
-
         self.setup_ui(current_key)
 
     def setup_ui(self, current_key):
@@ -387,7 +389,6 @@ class APIKeyDialog(ctk.CTkToplevel):
         main_frame = ctk.CTkFrame(self)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
 
-        # Title
         title_label = ctk.CTkLabel(
             main_frame,
             text="🔑 Konfigurasi API Key Groq",
@@ -395,8 +396,8 @@ class APIKeyDialog(ctk.CTkToplevel):
         )
         title_label.pack(pady=(0, 20))
 
-        # Info text
-        info_text = """Anda dapat menggunakan API key Groq sendiri atau menggunakan API key default. API key Anda akan disimpan secara lokal di komputer dan dienkripsi untuk keamanan."""
+        info_text = """Anda harus menggunakan API key Groq sendiri untuk menggunakan aplikasi ini.
+API key Anda akan disimpan secara lokal di komputer."""
 
         info_label = ctk.CTkLabel(
             main_frame,
@@ -407,12 +408,9 @@ class APIKeyDialog(ctk.CTkToplevel):
         info_label.pack(pady=(0, 20))
 
         # Current key status
-        if current_key and current_key != "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":
+        if current_key:
             status_text = f"✅ API Key Tersimpan: {current_key[:20]}..."
             status_color = "green"
-        elif current_key:
-            status_text = "🔧 Menggunakan API Key Default"
-            status_color = "orange"
         else:
             status_text = "❌ Tidak Ada API Key"
             status_color = "red"
@@ -424,7 +422,6 @@ class APIKeyDialog(ctk.CTkToplevel):
         )
         status_label.pack(pady=(0, 15))
 
-        # API Key input
         input_frame = ctk.CTkFrame(main_frame)
         input_frame.pack(fill=tk.X, pady=(0, 20))
 
@@ -438,10 +435,9 @@ class APIKeyDialog(ctk.CTkToplevel):
         )
         self.api_key_entry.pack(padx=10, pady=(0, 10))
 
-        if current_key and current_key != "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":
+        if current_key:
             self.api_key_entry.insert(0, current_key)
 
-        # Show/hide password button
         show_frame = ctk.CTkFrame(input_frame, fg_color="transparent")
         show_frame.pack(padx=10, pady=(0, 10))
 
@@ -454,7 +450,6 @@ class APIKeyDialog(ctk.CTkToplevel):
         )
         show_checkbox.pack(side=tk.LEFT)
 
-        # Instructions
         instructions_frame = ctk.CTkFrame(main_frame)
         instructions_frame.pack(fill=tk.X, pady=(0, 20))
 
@@ -472,21 +467,10 @@ class APIKeyDialog(ctk.CTkToplevel):
         )
         instructions_label.pack(padx=10, pady=10)
 
-        # Buttons
         button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         button_frame.pack(fill=tk.X)
 
-        # Use default button
-        default_btn = ctk.CTkButton(
-            button_frame,
-            text="Gunakan Default",
-            command=self.use_default_key,
-            width=120
-        )
-        default_btn.pack(side=tk.LEFT, padx=(0, 10))
-
-        # Remove key button
-        if current_key and current_key != "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":
+        if current_key:
             remove_btn = ctk.CTkButton(
                 button_frame,
                 text="Hapus Key",
@@ -497,7 +481,6 @@ class APIKeyDialog(ctk.CTkToplevel):
             )
             remove_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        # Save button
         save_btn = ctk.CTkButton(
             button_frame,
             text="Simpan",
@@ -506,7 +489,6 @@ class APIKeyDialog(ctk.CTkToplevel):
         )
         save_btn.pack(side=tk.RIGHT, padx=(10, 0))
 
-        # Cancel button
         cancel_btn = ctk.CTkButton(
             button_frame,
             text="Batal",
@@ -524,13 +506,6 @@ class APIKeyDialog(ctk.CTkToplevel):
         else:
             self.api_key_entry.configure(show="*")
 
-    def use_default_key(self):
-        """Menggunakan API key default."""
-        self.api_key = "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"
-        self.result = "default"
-        remove_user_api_key()  # Hapus user key jika ada
-        self.destroy()
-
     def save_key(self):
         """Menyimpan API key user."""
         key = self.api_key_entry.get().strip()
@@ -547,7 +522,6 @@ class APIKeyDialog(ctk.CTkToplevel):
             messagebox.showwarning("Peringatan", "API key terlalu pendek")
             return
 
-        # Test API key
         self.test_api_key(key)
 
     def test_api_key(self, key):
@@ -556,17 +530,15 @@ class APIKeyDialog(ctk.CTkToplevel):
             import groq
             test_client = groq.Groq(api_key=key)
 
-            # Test dengan request sederhana
             response = test_client.chat.completions.create(
                 model="deepseek-r1-distill-llama-70b",
                 messages=[{"role": "user", "content": "test"}],
                 max_tokens=5
             )
 
-            # Jika sampai sini berarti API key valid
             if save_user_api_key(key):
                 self.api_key = key
-                self.result = "custom"
+                self.result = "saved"
                 messagebox.showinfo("Sukses", "API key berhasil disimpan dan diverifikasi!")
                 self.destroy()
             else:
@@ -580,7 +552,7 @@ class APIKeyDialog(ctk.CTkToplevel):
                 messagebox.showwarning("Peringatan", "Rate limit tercapai, tapi API key valid. Disimpan.")
                 if save_user_api_key(key):
                     self.api_key = key
-                    self.result = "custom"
+                    self.result = "saved"
                     self.destroy()
             else:
                 messagebox.showerror("Error", f"Gagal memverifikasi API key:\n{error_msg}")
@@ -589,7 +561,6 @@ class APIKeyDialog(ctk.CTkToplevel):
         """Menghapus API key user."""
         if messagebox.askyesno("Konfirmasi", "Apakah Anda yakin ingin menghapus API key?"):
             if remove_user_api_key():
-                self.api_key = "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"
                 self.result = "removed"
                 messagebox.showinfo("Sukses", "API key berhasil dihapus")
                 self.destroy()
@@ -610,6 +581,11 @@ class VoiceToMarkdownApp:
         self.root.title("EchoScribe AI - Smart Voice Note Creator")
         self.root.geometry("1000x1080")
 
+        self.default_samplerate = 48000
+        self.default_channels = 2
+        self.default_blocksize = 1024
+        self.sample_width = 2
+
         try:
             base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
             icon_path = os.path.join(base_path, "icon.ico")
@@ -621,18 +597,16 @@ class VoiceToMarkdownApp:
             print(f"Error setting icon: {e}")
             pass
 
-        # ===== PERBAIKAN 1: Setup config management PERTAMA =====
         self.setup_config_management()
 
-        # Inisialisasi components lainnya
+        # Inisialisasi components
         self.recognizer = sr.Recognizer()
         self.microphones = self.get_available_microphones()
         self.selected_mic = tk.StringVar(root)
         if self.microphones:
             self.selected_mic.set(self.microphones[0])
 
-        # ===== PERBAIKAN 2: Inisialisasi variabel dengan nilai dari config =====
-        # Recording variables - gunakan nilai dari config
+        # Recording variables
         self.use_system_audio = tk.BooleanVar(root)
         self.use_system_audio.set(self.config.get("use_system_audio", False))
 
@@ -642,14 +616,14 @@ class VoiceToMarkdownApp:
         self.recording_mode = tk.StringVar(self.root)
         self.recording_mode.set(self.config.get("recording_mode", "microphone"))
 
-        # File variables - gunakan nilai dari config
+        # File variables
         self.output_folder = tk.StringVar(root)
         self.output_folder.set(self.config.get("output_folder", os.path.expanduser("~/Documents")))
 
         self.filename_prefix = tk.StringVar(root)
         self.filename_prefix.set(self.config.get("filename_prefix", "catatan"))
 
-        # AI variables - gunakan nilai dari config
+        # AI variables
         self.language = tk.StringVar(root)
         self.language.set(self.config.get("language", "id-ID"))
 
@@ -662,7 +636,7 @@ class VoiceToMarkdownApp:
         self.use_economic_model = tk.BooleanVar(root)
         self.use_economic_model.set(self.config.get("use_economic_model", False))
 
-        # Recording state - gunakan nilai dari config
+        # Recording state
         self.use_extended_recording = tk.BooleanVar(root)
         self.use_extended_recording.set(self.config.get("use_extended_recording", True))
 
@@ -678,6 +652,16 @@ class VoiceToMarkdownApp:
         self.temp_audio_files = []
         self.temp_dir = None
 
+        # Untuk dual recording
+        self.loopback_device = None
+        self.mic_device = None
+        self.loopback_thread = None
+        self.mic_thread = None
+        self.loopback_frames = []
+        self.mic_frames = []
+        self.loopback_channels = 0
+        self.mic_channels = 0
+
         # UI theme
         self.theme_color = "#1E1E1E"
         self.accent_color = "#007ACC"
@@ -686,7 +670,7 @@ class VoiceToMarkdownApp:
         self.button_hover = "#3A3A3A"
         self.border_color = "#3E3E3E"
 
-        # Processing variables - gunakan nilai dari config
+        # Processing variables
         self.processing_start_time = 0
         self.heading_spacing_before = 12
         self.heading_spacing_after = 6
@@ -696,7 +680,7 @@ class VoiceToMarkdownApp:
         # Error handling
         self.error_handler = None
 
-        # Inisialisasi API key dengan sistem yang ditingkatkan
+        # Inisialisasi API key
         self.setup_groq_api_key()
 
         # Initialize ffmpeg
@@ -705,10 +689,8 @@ class VoiceToMarkdownApp:
         # Setup UI
         self.setup_ui()
 
-        # ===== PERBAIKAN 3: Apply config SETELAH UI siap =====
         self.root.after(100, self.apply_config_after_ui_ready)
 
-        # Set up error handling dan exit handler
         self.post_init_hook()
 
         if not ffmpeg_found:
@@ -719,115 +701,78 @@ class VoiceToMarkdownApp:
             ))
 
     def setup_groq_api_key(self):
-        """Setup API key Groq dengan sistem user dan default key."""
-        # Coba load user API key terlebih dahulu
+        """Setup API key Groq dari user."""
         user_api_key = load_user_api_key()
 
         if user_api_key:
             self.api_key = user_api_key
-            logger.info("Using user's custom API key")
+            logger.info("Using user's API key")
+            try:
+                self.groq_client = groq.Groq(api_key=self.api_key)
+                logger.info("Groq client initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Groq client: {e}")
+                self.groq_client = None
         else:
-            # Gunakan default API key
-            self.api_key = "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"
-            logger.info("Using default API key")
-
-        # Inisialisasi Groq client
-        try:
-            self.groq_client = groq.Groq(api_key=self.api_key)
-            logger.info("Groq client initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Groq client: {e}")
+            # Tidak ada API key, user harus memasukkan
+            self.api_key = None
             self.groq_client = None
-            self.root.after(1000, lambda: messagebox.showwarning(
-                "API Key Error",
-                "Gagal menginisialisasi Groq client. Beberapa fitur tidak akan berfungsi.\n"
-                "Silakan periksa pengaturan API key di menu Settings."
-            ))
+            self.root.after(500, self.prompt_for_api_key)
+    
+    def prompt_for_api_key(self):
+        """Prompt user untuk memasukkan API key jika belum ada."""
+        if not self.api_key:
+            messagebox.showinfo(
+                "API Key Diperlukan",
+                "Anda perlu memasukkan API key Groq untuk menggunakan aplikasi ini.\n\n"
+                "Klik OK untuk membuka pengaturan API key."
+            )
+            self.show_api_key_dialog()
 
     def show_api_key_dialog(self):
         """Menampilkan dialog pengaturan API key."""
-        current_key = load_user_api_key() or self.api_key
+        current_key = load_user_api_key() or ""
 
         dialog = APIKeyDialog(self.root, current_key)
         self.root.wait_window(dialog)
 
-        if dialog.result and dialog.result != "cancel":
-            if dialog.result == "default":
-                self.api_key = "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"
-                self.status_var.set("Menggunakan API key default")
-            elif dialog.result == "custom":
-                self.api_key = dialog.api_key
-                self.status_var.set("Menggunakan API key custom")
-            elif dialog.result == "removed":
-                self.api_key = "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"
-                self.status_var.set("API key dihapus, menggunakan default")
-
-            # Reinisialisasi Groq client dengan API key baru
+        if dialog.result == "saved":
+            self.api_key = dialog.api_key
             try:
                 self.groq_client = groq.Groq(api_key=self.api_key)
-                logger.info("Groq client reinitialized with new API key")
+                logger.info("Groq client initialized with new API key")
+                self.status_var.set("API key berhasil dikonfigurasi")
             except Exception as e:
-                logger.error(f"Failed to reinitialize Groq client: {e}")
+                logger.error(f"Failed to initialize Groq client: {e}")
                 self.groq_client = None
-                messagebox.showerror("Error", f"Gagal menggunakan API key baru: {e}")
+                messagebox.showerror("Error", f"Gagal menggunakan API key: {e}")
+        elif dialog.result == "removed":
+            self.api_key = None
+            self.groq_client = None
+            self.status_var.set("API key dihapus")
 
-            # TAMBAHKAN INI untuk update tampilan status
-            self.update_api_status_display()
+        self.update_api_status_display()
 
     def get_available_microphones(self):
-        """
-        Get list of available microphones, excluding loopback devices.
-        """
+        """Get list of available microphones."""
         mic_list = []
 
         try:
-            if PYAUDIOWPATCH_AVAILABLE:
-                # Use PyAudioWPatch
-                p = pyaudio.PyAudio()
+            devices = sd.query_devices()
 
-                for i in range(p.get_device_count()):
-                    try:
-                        info = p.get_device_info_by_index(i)
+            for i, device in enumerate(devices):
+                if device['max_input_channels'] > 0:
+                    device_name = device['name'].lower()
+                    system_keywords = [
+                        'stereo mix', 'loopback', 'what u hear',
+                        'wave out mix', 'cable output', 'virtual cable'
+                    ]
 
-                        # Only include input devices that are NOT loopback
-                        if (info['maxInputChannels'] > 0 and
-                            not info.get('isLoopbackDevice', False)):
+                    is_system_device = any(kw in device_name for kw in system_keywords)
 
-                            # Skip system audio devices
-                            device_name = info['name'].lower()
-                            system_keywords = [
-                                'stereo mix', 'wave out mix', 'what u hear',
-                                'loopback', 'virtual cable'
-                            ]
+                    if not is_system_device:
+                        mic_list.append(f"{i}: {device['name']}")
 
-                            is_system_device = any(kw in device_name for kw in system_keywords)
-
-                            if not is_system_device:
-                                mic_list.append(f"{i}: {info['name']}")
-
-                    except Exception as e:
-                        logger.error(f"Error getting device {i}: {e}")
-                        continue
-
-                p.terminate()
-
-            else:
-                devices = sd.query_devices()
-
-                for i, device in enumerate(devices):
-                    if device['max_input_channels'] > 0:
-                        device_name = device['name'].lower()
-                        system_keywords = [
-                            'stereo mix', 'loopback', 'what u hear',
-                            'wave out mix', 'cable output', 'virtual cable'
-                        ]
-
-                        is_system_device = any(kw in device_name for kw in system_keywords)
-
-                        if not is_system_device:
-                            mic_list.append(f"{i}: {device['name']}")
-
-            # Add default if no mics found
             if not mic_list:
                 mic_list = ["0: Default Microphone"]
 
@@ -1066,14 +1011,8 @@ class VoiceToMarkdownApp:
     def setup_audio_visualization(self, parent_frame):
         """Setup real-time audio visualization dengan matplotlib - PERBAIKAN LENGKAP"""
         try:
-            # PERBAIKAN: Import matplotlib dengan fallback yang aman
             try:
-                import matplotlib
                 matplotlib.use('TkAgg')  # Set backend sebelum import pyplot
-                import matplotlib.pyplot as plt
-                from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-                import numpy as np
-                import queue
             except ImportError as e:
                 logger.error(f"❌ Matplotlib tidak tersedia: {e}")
                 self.setup_placeholder_visualization(parent_frame)
@@ -2303,9 +2242,10 @@ class VoiceToMarkdownApp:
 
             # Start processing if we have audio data
             if has_audio:
+                print("DEBUG: Starting audio processing automatically")
                 threading.Thread(target=self.process_audio_thread, daemon=True).start()
             else:
-                self.status_var.set("Error: Tidak ada data audio")
+                self.status_var.set("Error: No hay datos de audio para procesar")
                 print("ERROR: No audio data available for processing")
 
         except Exception as e:
@@ -2348,8 +2288,6 @@ class VoiceToMarkdownApp:
     def create_audio_visualizer(self, audio_data, sample_rate=44100):
         """Membuat visualisasi static dari audio yang sudah direkam"""
         try:
-            import matplotlib.pyplot as plt
-
             fig, axes = plt.subplots(3, 1, figsize=(12, 10))
             fig.suptitle('EchoScribe AI - Audio Analysis', fontsize=16, fontweight='bold')
 
@@ -2413,10 +2351,10 @@ class VoiceToMarkdownApp:
 
             # Tampilkan info dalam messagebox atau status
             info_text = f"""📊 Informasi Audio:
-    Duration: {duration:.2f}s
-    Sample Rate: {sample_rate} Hz
-    Max Amplitude: {max_amplitude:.3f}
-    RMS Level: {rms:.3f}"""
+                Duration: {duration:.2f}s
+                Sample Rate: {sample_rate} Hz
+                Max Amplitude: {max_amplitude:.3f}
+                RMS Level: {rms:.3f}"""
 
             self.root.after(0, lambda: messagebox.showinfo("Audio Info", info_text))
 
@@ -2500,218 +2438,357 @@ class VoiceToMarkdownApp:
 
     def record_system_audio(self):
         """
-        Record system audio dengan error handling dan logging yang diperbaiki.
+        Record system audio using the SoundCard library with correct loopback handling.
+        Based on proven working implementation.
         """
         try:
-            if not PYAUDIOWPATCH_AVAILABLE:
-                raise ImportError("PyAudioWPatch not available")
+            # COM initialization (keep your existing code)
+            try:
+                import comtypes.client
+                # Try different initialization approaches
+                try:
+                    # Method 1: Standard CoInitialize
+                    comtypes.client.CoInitialize()
+                    logger.info("COM initialized with CoInitialize")
+                except (AttributeError, ImportError) as e1:
+                    try:
+                        # Method 2: Direct CoInitializeEx if available
+                        comtypes.client.CoInitializeEx(0)
+                        logger.info("COM initialized with CoInitializeEx(0)")
+                    except (AttributeError, ImportError) as e2:
+                        try:
+                            # Method 3: Alternative module pythoncom if available
+                            import pythoncom
+                            pythoncom.CoInitialize()
+                            logger.info("COM initialized with pythoncom.CoInitialize")
+                        except ImportError:
+                            logger.warning("Could not initialize COM - neither comtypes nor pythoncom available")
+            except Exception as com_err:
+                logger.warning(f"COM initialization warning (non-critical): {com_err}")
 
-            self.root.after(0, lambda: self.status_var.set("Mencari device audio sistem..."))
+            self.root.after(0, lambda: self.status_var.set("Initializing system audio capture..."))
 
-            # Dapatkan device loopback dengan validasi yang lebih ketat
-            loopback_device_index, loopback_device_info = self.get_primary_speaker_loopback_device()
+            frames = []
+            rate = self.default_samplerate
+            blocksize = 4096  # Increased from typical 1024
+            sample_width = self.sample_width
+            actual_channels = self.default_channels
 
-            if loopback_device_index is None:
-                error_msg = "Tidak dapat menemukan device loopback yang kompatibel"
+            # Track audio levels for silence detection
+            silence_counter = 0
+            total_frames = 0
+            max_rms = 0.0
+            discontinuity_count = 0
+
+            # Get the default speaker
+            default_speaker = sc.default_speaker()
+            if not default_speaker:
+                error_msg = "SoundCard could not find default speaker."
                 logger.error(error_msg)
-                self.root.after(0, lambda: self.status_var.set("ERROR: Device loopback tidak ditemukan"))
-                self.root.after(0, lambda: self._show_enhanced_system_audio_troubleshooting(error_msg))
+                self.root.after(0, lambda: self.status_var.set("ERROR: Cannot find default speaker"))
+                self.root.after(0, lambda msg=error_msg: self._show_enhanced_system_audio_troubleshooting(msg))
                 self.root.after(2000, self._fallback_to_microphone_recording)
                 return
 
-            # Konfigurasi audio yang adaptif dengan validasi
-            CHUNK = 1024
-            FORMAT = pyaudio.paInt16
-            max_channels = int(loopback_device_info['maxInputChannels'])
-            CHANNELS = min(2, max_channels) if max_channels > 0 else 1
+            logger.info(f"Default speaker found: {default_speaker.name}")
 
-            default_rate = int(loopback_device_info['defaultSampleRate'])
-            possible_rates = [default_rate, 44100, 48000, 16000]
-            RATE = None
+            # Get the loopback microphone
+            loopback_mic = sc.get_microphone(id=str(default_speaker.id), include_loopback=True)
+            if not loopback_mic:
+                error_msg = f"Could not find loopback microphone for speaker: {default_speaker.name}"
+                logger.error(error_msg)
+                self.root.after(0, lambda: self.status_var.set(f"ERROR: No loopback for {default_speaker.name}"))
+                self.root.after(0, lambda msg=error_msg: self._show_enhanced_system_audio_troubleshooting(msg))
+                self.root.after(2000, self._fallback_to_microphone_recording)
+                return
 
-            # Test rate yang didukung dengan validasi yang ketat
-            for test_rate in possible_rates:
-                if test_rate > 0 and test_rate <= 192000:  # Validasi range yang masuk akal
-                    RATE = test_rate
-                    break
+            logger.info(f"Loopback microphone found: {loopback_mic.name}")
+            self.root.after(0, lambda: self.status_var.set(f"Recording from: {loopback_mic.name} @ {rate}Hz"))
 
-            if RATE is None or RATE == 0:
-                logger.error("Could not determine valid sample rate")
-                RATE = 44100  # Ultimate fallback
+            # Start recording
+            self.recording = True
+            self.stop_recording_flag = False
+            self.chunk_count = 0
 
-            logger.info(f"Using validated audio config: {RATE}Hz, {CHANNELS} channels, device: {loopback_device_index}")
+            self.root.after(0, lambda: self.status_var.set("🔴 Recording system audio..."))
 
-            # Initialize PyAudio dengan error handling yang lebih baik
-            p = pyaudio.PyAudio()
+            # Add a delay to stabilize the audio system
+            time.sleep(0.2)
 
-            device_name = loopback_device_info['name'][:30] + "..." if len(loopback_device_info['name']) > 30 else loopback_device_info['name']
-            self.root.after(0, lambda: self.status_var.set(f"Menggunakan: {device_name}"))
+            # Create a buffer to smooth out discontinuities
+            smooth_buffer = []
+            buffer_size = 3  # Keep a few frames for smoothing
 
-            # Buka stream dengan konfigurasi adaptif dan validasi
-            stream = None
+            # Use a custom warning handler to count discontinuities
+            import warnings
+            original_warn = warnings.warn
+
+            def count_discontinuity_warning(message, category, *args, **kwargs):
+                nonlocal discontinuity_count
+                if isinstance(message, str) and "data discontinuity in recording" in message:
+                    discontinuity_count += 1
+                    # Only log every 5th discontinuity to avoid spamming
+                    if discontinuity_count % 5 == 0:
+                        logger.warning(f"Audio discontinuity detected (count: {discontinuity_count})")
+                return original_warn(message, category, *args, **kwargs)
+
+            warnings.warn = count_discontinuity_warning
+
             try:
-                stream = p.open(
-                    format=FORMAT,
-                    channels=CHANNELS,
-                    rate=RATE,
-                    input=True,
-                    input_device_index=loopback_device_index,
-                    frames_per_buffer=CHUNK,
-                    input_host_api_specific_stream_info=None
-                )
+                # Main recording loop with discontinuity handling
+                with loopback_mic.recorder(samplerate=rate, blocksize=blocksize) as recorder:
+                    while not self.stop_recording_flag and self.recording:
+                        try:
+                            # Record data
+                            data_np = recorder.record(numframes=blocksize)
+                            if data_np.size == 0:
+                                time.sleep(0.01)  # Short sleep to avoid busy-waiting
+                                continue
 
-                logger.info(f"SUCCESS: Stream opened successfully: {RATE}Hz, {CHANNELS} channels")
+                            # Detect channels on first frame
+                            if not frames:
+                                if data_np.ndim > 1:
+                                    actual_channels = data_np.shape[1]
+                                else:
+                                    actual_channels = 1
+                                logger.info(f"Detected {actual_channels} channel(s) in recording.")
 
-            except Exception as stream_error:
-                logger.error(f"Error opening stream: {stream_error}")
+                            # Calculate RMS for silence detection
+                            rms = np.sqrt(np.mean(data_np ** 2))
+                            max_rms = max(max_rms, rms)
 
-                # Try dengan konfigurasi fallback yang lebih konservatif
-                try:
-                    logger.info("Mencoba konfigurasi fallback...")
-                    CHANNELS = 1  # Force mono
-                    RATE = 44100  # Force standard rate
+                            if rms < 0.001:  # Very low audio level
+                                silence_counter += 1
+                                # Log occasional silence statistics
+                                if total_frames > 0 and total_frames % 100 == 0:
+                                    silence_ratio = silence_counter / total_frames
+                                    if silence_ratio > 0.95:
+                                        logger.warning(f"Recording appears to be mostly silent: {silence_ratio:.1%}, max RMS: {max_rms:.6f}")
+                                        # Show a warning message but only every ~10 seconds
+                                        if total_frames % 300 == 0:
+                                            self.root.after(0, lambda: self.status_var.set("⚠️ Very low audio level detected"))
 
-                    stream = p.open(
-                        format=FORMAT,
-                        channels=CHANNELS,
-                        rate=RATE,
-                        input=True,
-                        input_device_index=loopback_device_index,
-                        frames_per_buffer=CHUNK
-                    )
+                            total_frames += 1
 
-                    logger.info(f"SUCCESS: Fallback stream opened: {RATE}Hz, {CHANNELS} channels")
+                            # Convert float to int16 bytes
+                            data_int16 = (data_np * 32767).astype(np.int16)
+                            data_bytes = data_int16.tobytes()
 
-                except Exception as fallback_error:
-                    logger.error(f"Fallback stream also failed: {fallback_error}")
-                    p.terminate()
-                    self.root.after(0, lambda: self.status_var.set("ERROR: Gagal membuka stream audio"))
-                    self.root.after(0, lambda: self._show_enhanced_system_audio_troubleshooting(str(fallback_error)))
-                    self.root.after(2000, self._fallback_to_microphone_recording)
-                    return
+                            # Add to smooth buffer to handle discontinuities
+                            smooth_buffer.append(data_bytes)
+                            if len(smooth_buffer) > buffer_size:
+                                # Add the oldest frame from the buffer to our recording
+                                frames.append(smooth_buffer.pop(0))
 
-            # Recording loop dengan monitoring yang lebih akurat
-            frames = []
-            chunk_start_time = time.time()
-            total_samples = 0
-            non_silent_chunks = 0
-            consecutive_errors = 0
-            max_consecutive_errors = 10
+                            # Update visualization if enabled
+                            if hasattr(self, 'audio_queue') and hasattr(self, 'viz_enabled') and self.viz_enabled.get():
+                                if not self.audio_queue.full():
+                                    self.audio_queue.put_nowait(data_np)
 
-            # Variabel untuk monitoring kualitas audio
-            audio_quality_samples = []
-            last_quality_check = time.time()
+                            # Handle chunking if enabled (your existing code)
+                            if self.use_extended_recording and self.use_extended_recording.get() and len(frames) > 0:
+                                chunk_duration = self.get_audio_duration_from_frames(frames, rate, actual_channels, sample_width)
+                                if chunk_duration >= self.chunk_size.get():
+                                    # Create temp directory if needed
+                                    if not hasattr(self, 'temp_dir') or not self.temp_dir:
+                                        import tempfile
+                                        import os
+                                        self.temp_dir = tempfile.mkdtemp(prefix="echoscribe_audio_")
+                                        self.temp_audio_files = []
+                                        logger.info(f"Created temp directory: {self.temp_dir}")
 
-            self.root.after(0, lambda: self.status_var.set("RECORDING: Recording aktif - memantau audio sistem..."))
+                                    # Save chunk with discontinuity info
+                                    if discontinuity_count > 0:
+                                        logger.info(f"Saving chunk with {discontinuity_count} discontinuities")
+                                        discontinuity_count = 0  # Reset for next chunk
 
-            while not self.stop_recording_flag and self.recording:
-                try:
-                    # Baca data dari loopback device
-                    data = stream.read(CHUNK, exception_on_overflow=False)
-                    frames.append(data)
-                    total_samples += CHUNK
-                    consecutive_errors = 0  # Reset error counter
+                                    # Save the chunk
+                                    self._save_system_audio_chunk_optimized(frames, rate, actual_channels, sample_width)
 
-                    # Monitor level audio dengan validasi yang lebih ketat
-                    try:
-                        audio_level = audioop.rms(data, 2)
-                        audio_quality_samples.append(audio_level)
+                                    # Keep a small overlap to prevent gaps
+                                    overlap_frames = []
+                                    overlap_size = int(0.5 * rate * actual_channels * sample_width)  # 500ms overlap
 
-                        # Threshold dinamis berdasarkan rata-rata level audio
-                        if len(audio_quality_samples) > 10:
-                            avg_level = sum(audio_quality_samples[-10:]) / 10
-                            dynamic_threshold = max(avg_level * 0.1, 50)
-                        else:
-                            dynamic_threshold = 50
+                                    # Calculate frames to keep for overlap
+                                    total_bytes = 0
+                                    for i in range(len(frames) - 1, -1, -1):
+                                        total_bytes += len(frames[i])
+                                        overlap_frames.insert(0, frames[i])
+                                        if total_bytes >= overlap_size:
+                                            break
 
-                        if audio_level > dynamic_threshold:
-                            non_silent_chunks += 1
+                                    frames = overlap_frames
 
-                        # Update status setiap 100 chunks dengan informasi kualitas
-                        current_time = time.time()
-                        if total_samples % (CHUNK * 100) == 0 or (current_time - last_quality_check) > 5:
-                            percentage_active = (non_silent_chunks / max(total_samples // CHUNK, 1)) * 100
-                            avg_quality = sum(audio_quality_samples[-50:]) / min(len(audio_quality_samples), 50)
-                            quality_indicator = "📶" if avg_quality > 1000 else "📶" if avg_quality > 500 else "📶"
+                        except Exception as e:
+                            logger.error(f"Error during recording: {e}", exc_info=True)
+                            time.sleep(0.05)  # Slightly longer delay on errors
 
-                            self.root.after(0, lambda pct=percentage_active, qual=quality_indicator:
-                                        self.status_var.set(f"RECORDING: {qual} Audio aktif: {pct:.1f}%"))
-                            last_quality_check = current_time
+                    # Add any remaining buffer frames to the recording
+                    frames.extend(smooth_buffer)
 
-                    except Exception as level_error:
-                        logger.debug(f"Audio level monitoring error: {level_error}")
+            finally:
+                # Restore original warning handler
+                warnings.warn = original_warn
 
-                    # Handle chunking untuk extended recording dengan validasi ukuran
-                    if self.use_extended_recording.get():
-                        chunk_length = self.get_audio_duration_from_frames(frames, RATE)
-                        if chunk_length >= self.chunk_size.get():
-                            self._save_system_audio_chunk(frames, RATE, CHANNELS)
-                            frames = []
-                            chunk_start_time = time.time()
-
-                except Exception as e:
-                    consecutive_errors += 1
-
-                    if "Input overflowed" in str(e):
-                        logger.debug(f"Input overflow (error #{consecutive_errors})")
-                        continue
-                    else:
-                        logger.error(f"Error during recording (#{consecutive_errors}): {e}")
-
-                        if consecutive_errors >= max_consecutive_errors:
-                            logger.error(f"Too many consecutive errors ({consecutive_errors}), stopping recording")
-                            break
-
-            # Cleanup dengan validasi
-            try:
-                if stream and stream.is_active():
-                    stream.stop_stream()
-                if stream:
-                    stream.close()
-                p.terminate()
-                logger.info("SUCCESS: Audio stream cleaned up successfully")
-            except Exception as cleanup_error:
-                logger.error(f"Error during cleanup: {cleanup_error}")
-
-            # Simpan data terakhir dengan validasi
-            if frames:
-                try:
-                    if self.use_extended_recording.get():
-                        self._save_system_audio_chunk(frames, RATE, CHANNELS)
-                    else:
-                        self._save_system_audio_to_file(frames, RATE, CHANNELS)
-                    logger.info(f"SUCCESS: Audio data saved successfully ({len(frames)} chunks)")
-                except Exception as save_error:
-                    logger.error(f"Error saving audio data: {save_error}")
-
-            # Status akhir dengan informasi kualitas yang akurat
-            if non_silent_chunks > 0:
-                percentage_active = (non_silent_chunks / max(total_samples // CHUNK, 1)) * 100
-                avg_quality = sum(audio_quality_samples) / max(len(audio_quality_samples), 1) if audio_quality_samples else 0
-                quality_desc = "Excellent" if avg_quality > 2000 else "Good" if avg_quality > 1000 else "Fair" if avg_quality > 500 else "Poor"
-
-                self.root.after(0, lambda pct=percentage_active, qual=quality_desc:
-                            self.status_var.set(f"SUCCESS: Selesai! Audio: {pct:.1f}% aktif, Kualitas: {qual}"))
-            else:
-                self.root.after(0, lambda: self.status_var.set(
-                    "WARNING: Tidak ada audio terdeteksi - pastikan ada audio yang diputar"))
-                self.root.after(1000, lambda: self._show_no_audio_detected_tips())
+            logger.info(f"Recording finished. Stats: {total_frames} frames, {silence_counter} silent, {discontinuity_count} discontinuities")
+            self.root.after(0, lambda: self.status_var.set("Finishing recording..."))
 
         except Exception as e:
-            logger.error(f"Error in record_system_audio: {e}", exc_info=True)
+            error_msg = f"SoundCard Recording Error: {e}"
+            logger.error(error_msg, exc_info=True)
             self.root.after(0, lambda: self.status_var.set(f"ERROR: {str(e)[:50]}..."))
+            self.root.after(0, lambda err=str(e): self._show_enhanced_system_audio_troubleshooting(err))
             self.recording = False
-            self.root.after(0, lambda: self.record_button.configure(text="Mulai Rekaman"))
-            self.root.after(1000, lambda: self._show_enhanced_system_audio_troubleshooting(str(e)))
+            return
+        finally:
+            self.recording = False
+            # Uninitialize COM properly
+            try:
+                import comtypes.client
+                try:
+                    comtypes.client.CoUninitialize()
+                except (AttributeError, ImportError):
+                    try:
+                        import pythoncom
+                        pythoncom.CoUninitialize()
+                    except (ImportError, AttributeError):
+                        pass
+            except Exception:
+                pass
 
-    def get_audio_duration_from_frames(self, frames, sample_rate):
-        """Calculate duration from audio frames"""
-        if not frames or sample_rate == 0:
-            return 0
+        # Check if we recorded meaningful audio
+        if len(frames) > 0:
+            # Calculate overall silence ratio
+            if total_frames > 0:
+                silence_ratio = silence_counter / total_frames
+                logger.info(f"Final silence stats: {silence_ratio:.1%} silent, max level: {max_rms:.6f}")
 
-        total_samples = len(frames) * 1024  # Assuming CHUNK size of 1024
-        duration = total_samples / sample_rate
+                # Warn if the recording was mostly silence
+                if silence_ratio > 0.98 and max_rms < 0.01:
+                    logger.warning("Recording appears to be entirely silent")
+                    self.root.after(0, lambda: self.status_var.set("⚠️ Silent recording detected"))
+
+                    # Ask user if they want to proceed with a silent recording
+                    proceed = messagebox.askyesno(
+                        "Silent Recording Detected",
+                        "Your recording appears to contain almost no audio. This often results in "
+                        "random or meaningless transcription.\n\n"
+                        "Would you like to proceed anyway?"
+                    )
+
+                    if not proceed:
+                        logger.info("User cancelled processing of silent recording")
+                        self.root.after(0, lambda: self.status_var.set("Processing cancelled - silent recording"))
+                        return
+
+            # ADD THIS CODE: Save a debug copy of the audio to the code directory
+            try:
+                import os
+                import datetime
+
+                # Get the current script directory
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                debug_filename = os.path.join(current_dir, f"debug_recording_{timestamp}.wav")
+
+                # Save the debug recording file
+                with wave.open(debug_filename, "wb") as wf:
+                    wf.setnchannels(actual_channels)
+                    wf.setsampwidth(sample_width)
+                    wf.setframerate(rate)
+                    wf.writeframes(b"".join(frames))
+
+                logger.info(f"Debug audio saved to: {debug_filename}")
+                self.root.after(0, lambda: self.status_var.set(f"Debug audio saved to project folder"))
+
+                # Show a message to the user about the debug file
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "Debug Recording Saved",
+                    f"A copy of the raw audio has been saved to:\n{debug_filename}\n\nYou can listen to this file to check the recording quality."
+                ))
+            except Exception as e:
+                logger.error(f"Error saving debug audio: {e}", exc_info=True)
+
+            # Proceed with normal saving and processing
+            if self.use_extended_recording and self.use_extended_recording.get():
+                if hasattr(self, 'temp_dir') and self.temp_dir:
+                    self._save_system_audio_chunk_optimized(frames, rate, actual_channels, sample_width)
+                else:
+                    import tempfile
+                    import os
+                    self.temp_dir = tempfile.mkdtemp(prefix="echoscribe_audio_")
+                    self.temp_audio_files = []
+                    logger.info(f"Created temp directory: {self.temp_dir}")
+                    self._save_system_audio_chunk_optimized(frames, rate, actual_channels, sample_width)
+            else:
+                # Save entire recording
+                self._save_system_audio_to_file_optimized(frames, rate, actual_channels, sample_width)
+
+            # Start processing thread
+            self.root.after(100, lambda: threading.Thread(target=self.process_audio_thread, daemon=True).start())
+        else:
+            logger.warning("No audio frames captured.")
+            self.root.after(0, lambda: self.status_var.set("No audio captured"))
+            self.root.after(0, lambda: messagebox.showwarning(
+                "No Audio Captured",
+                "No system audio was detected. Make sure audio is playing on your system."
+            ))
+
+    def get_audio_duration_from_frames(self, frames_list, rate, channels, sample_width):
+        total_bytes = sum(len(f) for f in frames_list)
+        num_frames = total_bytes / (channels * sample_width)
+        duration = num_frames / rate
         return duration
+
+    def _save_system_audio_chunk_with_overlap(self, frames_list, rate, channels, sample_width):
+        """
+        Helper function to save chunk of system audio with overlap to prevent gaps.
+        A modification of _save_system_audio_chunk_optimized that ensures high quality chunking.
+        """
+        if not self.temp_dir:
+            logger.error("Temp directory not available")
+            return
+
+        try:
+            # Generate unique filename with timestamp
+            timestamp = int(time.time() * 1000)
+            temp_file = os.path.join(self.temp_dir, f"system_chunk_{channels}ch_{len(self.temp_audio_files)}_{timestamp}.wav")
+
+            # Save the WAV file with proper parameters
+            with wave.open(temp_file, 'wb') as wf:
+                wf.setnchannels(channels)
+                wf.setsampwidth(sample_width)
+                wf.setframerate(rate)
+
+                # Join all frames and write at once for better performance
+                combined_data = b"".join(frames_list)
+                wf.writeframes(combined_data)
+
+            # Validate saved file
+            file_size = os.path.getsize(temp_file)
+            duration = self.get_audio_duration_from_frames(frames_list, rate, channels, sample_width)
+
+            if file_size < 1024:
+                logger.warning(f"Saved audio chunk is very small: {file_size} bytes")
+
+            # Verify the file contains valid audio data
+            with wave.open(temp_file, 'rb') as wf:
+                # Read a small sample and check audio levels
+                sample = wf.readframes(min(1024, wf.getnframes()))
+                if sample:
+                    audio_array = np.frombuffer(sample, dtype=np.int16)
+                    rms = np.sqrt(np.mean(audio_array.astype(np.float64) ** 2))
+                    logger.info(f"Chunk saved: {os.path.basename(temp_file)}, RMS={rms:.2f}")
+
+                    if rms < 10.0:  # Very low audio level
+                        logger.warning(f"Very low audio level in chunk: {os.path.basename(temp_file)}")
+
+            logger.info(f"Saved system audio chunk: {os.path.basename(temp_file)} ({file_size} bytes, {duration:.2f}s)")
+            self.temp_audio_files.append(temp_file)
+            self.chunk_count += 1
+
+        except Exception as e:
+            logger.error(f"Error saving system audio chunk: {e}")
 
     def _fallback_to_microphone_recording(self):
         """
@@ -2737,97 +2814,6 @@ class VoiceToMarkdownApp:
 
         except Exception as e:
             logger.error(f"Error in fallback to microphone: {e}")
-
-    def _show_no_audio_detected_tips(self):
-        """
-        Tampilkan tips ketika tidak ada audio yang terdeteksi.
-        """
-        tips_window = tk.Toplevel(self.root)
-        tips_window.title("Tips: Tidak Ada Audio Terdeteksi")
-        tips_window.geometry("500x400")
-        tips_window.transient(self.root)
-        tips_window.grab_set()
-
-        main_frame = ctk.CTkFrame(tips_window)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
-
-        # Title
-        title_label = ctk.CTkLabel(
-            main_frame,
-            text="🔇 Tidak Ada Audio Terdeteksi",
-            font=ctk.CTkFont(size=18, weight="bold")
-        )
-        title_label.pack(pady=(0, 15))
-
-        # Tips content
-        tips_text = """
-    KEMUNGKINAN PENYEBAB & SOLUSI:
-
-    ✅ PASTIKAN AUDIO SEDANG DIPUTAR:
-    • Buka YouTube, Spotify, atau aplikasi audio lainnya
-    • Pastikan volume sistem tidak dalam keadaan mute
-    • Volume aplikasi audio harus > 0%
-
-    ✅ PERIKSA PENGATURAN WINDOWS:
-    • Buka Settings > System > Sound
-    • Pastikan output device benar
-    • Test speaker dengan tombol "Test"
-
-    ✅ COBA ALTERNATIF LAIN:
-    • Gunakan mode "Mikrofon + Audio sistem"
-    • Gunakan "Mikrofon saja" sambil putar audio speaker
-    • Install VB-Cable untuk virtual audio routing
-
-    ✅ RESTART AUDIO SERVICES:
-    • Tekan Win+R, ketik "services.msc"
-    • Restart "Windows Audio" service
-    • Restart aplikasi ini
-
-    Jika masih bermasalah, gunakan mode recording lain.
-        """
-
-        text_widget = ctk.CTkTextbox(main_frame, wrap=tk.WORD, height=250)
-        text_widget.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-        text_widget.insert("1.0", tips_text)
-        text_widget.configure(state="disabled")
-
-        # Buttons
-        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        button_frame.pack(fill=tk.X)
-
-        def switch_to_dual():
-            self.recording_mode.set("dual")
-            self._update_recording_mode()
-            tips_window.destroy()
-
-        def switch_to_mic():
-            self.recording_mode.set("microphone")
-            self._update_recording_mode()
-            tips_window.destroy()
-
-        dual_btn = ctk.CTkButton(
-            button_frame,
-            text="Coba Dual Recording",
-            command=switch_to_dual,
-            width=150
-        )
-        dual_btn.pack(side=tk.LEFT, padx=(0, 10))
-
-        mic_btn = ctk.CTkButton(
-            button_frame,
-            text="Gunakan Mikrofon Saja",
-            command=switch_to_mic,
-            width=150
-        )
-        mic_btn.pack(side=tk.LEFT, padx=10)
-
-        close_btn = ctk.CTkButton(
-            button_frame,
-            text="Tutup",
-            command=tips_window.destroy,
-            width=100
-        )
-        close_btn.pack(side=tk.RIGHT)
 
     def _show_enhanced_system_audio_troubleshooting(self, error_message):
         """
@@ -3252,60 +3238,115 @@ class VoiceToMarkdownApp:
         except Exception as e:
             logger.error(f"Error logging loopback devices: {e}")
 
-    def _save_system_audio_chunk(self, frames, rate, channels):
+    def _save_system_audio_chunk_optimized(self, frames_list, rate, channels, sample_width):
         """
-        Helper function untuk menyimpan chunk audio sistem.
+        Helper function to save chunk of system audio in mono format.
         """
         if not self.temp_dir:
             logger.error("Temp directory not available")
             return
 
         try:
-            temp_file = os.path.join(self.temp_dir, f"system_chunk_{len(self.temp_audio_files)}.wav")
+            # Generate unique filename with timestamp
+            timestamp = int(time.time() * 1000)
+            temp_file = os.path.join(self.temp_dir, f"system_chunk_mono_{len(self.temp_audio_files)}_{timestamp}.wav")
 
             with wave.open(temp_file, 'wb') as wf:
-                wf.setnchannels(channels)
-                wf.setsampwidth(2)  # 16-bit audio
+                wf.setnchannels(channels)  # Always mono
+                wf.setsampwidth(sample_width)  # 16-bit audio
                 wf.setframerate(rate)
-                wf.writeframes(b''.join(frames))
+                wf.writeframes(b"".join(frames_list))
 
-            # Validasi file yang disimpan
+            # Validate saved file
             file_size = os.path.getsize(temp_file)
-            if file_size < 1024:  # File terlalu kecil
-                logger.warning(f"Saved audio chunk is very small: {file_size} bytes")
-
-            self.temp_audio_files.append(temp_file)
-            logger.info(f"Saved system audio chunk: {temp_file} ({file_size} bytes)")
-
-        except Exception as e:
-            logger.error(f"Error saving system audio chunk: {e}")
-
-    def _save_system_audio_to_file(self, frames, rate, channels):
-        """
-        Simpan audio sistem ke file temporary.
-        """
-        try:
-            self.temp_wav_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-
-            with wave.open(self.temp_wav_file.name, 'wb') as wf:
-                wf.setnchannels(channels)
-                wf.setsampwidth(2)  # 16-bit audio
-                wf.setframerate(rate)
-                wf.writeframes(b''.join(frames))
-
-            # Validasi file
-            file_size = os.path.getsize(self.temp_wav_file.name)
-            audio_duration = len(frames) * 1024 / rate  # Estimasi durasi
-
-            logger.info(f"Saved system audio: {self.temp_wav_file.name}")
-            logger.info(f"File size: {file_size} bytes, Duration: {audio_duration:.2f}s")
+            duration = self.get_audio_duration_from_frames(frames_list, rate, channels, sample_width)
 
             if file_size < 1024:
-                logger.warning("Audio file is very small - may indicate no audio was captured")
+                logger.warning(f"Saved mono audio chunk is very small: {file_size} bytes")
+
+            logger.info(f"Saved mono system audio chunk: {os.path.basename(temp_file)} ({file_size} bytes, {duration:.2f}s)")
+            self.temp_audio_files.append(temp_file)
 
         except Exception as e:
-            logger.error(f"Error saving system audio to file: {e}")
+            logger.error(f"Error saving mono system audio chunk: {e}")
+
+    def _save_system_audio_to_file_optimized(self, frames, rate, actual_channels, sample_width):
+        """
+        Save system audio to temporary file with detected channel configuration.
+
+        Args:
+            frames: List of audio frame bytes
+            rate: Sample rate in Hz
+            actual_channels: Number of audio channels (1=mono, 2=stereo)
+            sample_width: Sample width in bytes (2=16-bit)
+        """
+        try:
+            if not frames:
+                logger.error("No frames to save to file")
+                return
+
+            # Create temporary file path
+            filename = f"recording_{actual_channels}ch_{int(time.time())}.wav"
+            temp_path = os.path.join(tempfile.gettempdir(), filename)
+
+            logger.info(f"Saving {actual_channels}-channel audio to: {temp_path}")
+
+            # Save with robust error handling
+            with wave.open(temp_path, 'wb') as wf:
+                wf.setnchannels(actual_channels)  # Use detected channels
+                wf.setsampwidth(sample_width)  # Use provided sample width
+                wf.setframerate(rate)
+
+                # Join frames and write at once
+                combined_frames = b''.join(frames)
+                wf.writeframes(combined_frames)
+
+            # Validate saved file
+            if os.path.exists(temp_path):
+                file_size = os.path.getsize(temp_path)
+                audio_duration = self.get_audio_duration_from_frames(frames, rate, actual_channels, sample_width)
+
+                logger.info(f"✅ Audio saved: {temp_path}")
+                logger.info(f"📊 File size: {file_size} bytes, Duration: {audio_duration:.2f}s")
+
+                # Store as string path
+                self.temp_wav_file = temp_path
+
+                # Validate audio content
+                with wave.open(temp_path, 'rb') as wf:
+                    test_frames = wf.readframes(1024)
+                    if test_frames:
+                        audio_array = np.frombuffer(test_frames, dtype=np.int16)
+                        rms = np.sqrt(np.mean(audio_array.astype(np.float64) ** 2))
+                        logger.info(f"📈 Audio validation: RMS={rms:.2f}")
+
+                        if rms < 1.0:
+                            logger.warning("⚠️ Saved audio has very low level (near silence)")
+                    else:
+                        logger.warning("⚠️ Could not read frames from saved file for validation")
+            else:
+                logger.error(f"❌ Saved file not found: {temp_path}")
+                self.temp_wav_file = None
+
+        except Exception as e:
+            logger.error(f"❌ Error saving audio to file: {e}", exc_info=True)
             self.temp_wav_file = None
+
+            # Try fallback save
+            try:
+                fallback_path = os.path.join(tempfile.gettempdir(), f"fallback_{actual_channels}ch_{int(time.time())}.wav")
+                with wave.open(fallback_path, 'wb') as wf:
+                    wf.setnchannels(actual_channels)
+                    wf.setsampwidth(sample_width)
+                    wf.setframerate(rate)
+
+                    for frame in frames:
+                        wf.writeframes(frame)
+
+                self.temp_wav_file = fallback_path
+                logger.info(f"✅ Fallback save successful: {fallback_path}")
+            except Exception as fallback_e:
+                logger.error(f"❌ Fallback save also failed: {fallback_e}")
 
     def record_microphone_audio(self):
         """Record audio from the selected microphone"""
@@ -3417,7 +3458,6 @@ class VoiceToMarkdownApp:
                         if hasattr(self, 'audio_queue') and hasattr(self, 'viz_enabled') and \
                         self.viz_enabled.get() and total_chunks % 5 == 0:
                             try:
-                                import numpy as np
                                 audio_data = np.frombuffer(data, dtype=np.int16)
                                 if len(audio_data) > 0 and self.audio_queue.qsize() < 10:
                                     self.audio_queue.put_nowait(audio_data)
@@ -3594,9 +3634,9 @@ class VoiceToMarkdownApp:
             # Simpan data terakhir
             if mixed_frames:
                 if self.use_extended_recording.get():
-                    self._save_system_audio_chunk(mixed_frames, RATE, CHANNELS)
+                    self._save_system_audio_chunk_optimized(mixed_frames, RATE, CHANNELS)
                 else:
-                    self._save_system_audio_to_file(mixed_frames, RATE, CHANNELS)
+                    self._save_system_audio_to_file_optimized(mixed_frames, RATE, CHANNELS)
 
             self.root.after(0, lambda: self.status_var.set("Dual recording selesai"))
 
@@ -3620,8 +3660,6 @@ class VoiceToMarkdownApp:
             Mixed audio data (bytes)
         """
         try:
-            import numpy as np
-
             # Convert bytes to numpy arrays
             audio1 = np.frombuffer(data1, dtype=np.int16)
             audio2 = np.frombuffer(data2, dtype=np.int16)
@@ -4552,8 +4590,10 @@ class VoiceToMarkdownApp:
                 # **ENHANCEMENT: Boost confidence untuk bahasa yang cocok**
                 if language_code == 'id' and any(term in reasoning.lower() for term in ['indonesian', 'indonesia', 'bahasa']):
                     confidence = min(1.0, confidence + 0.1)
-                elif language_code == 'en' and any(term in reasoning.lower() for term in ['english', 'english pattern']):
-                    confidence = min(1.0, confidence + 0.1)
+                if language_code == 'en':
+                    reasoning_str = " ".join(reasoning) if isinstance(reasoning, list) else reasoning
+                    if any(term in reasoning_str.lower() for term in ['english', 'english pattern']):
+                        confidence = min(1.0, confidence + 0.1)
 
                 # Validasi confidence range
                 confidence = max(0.0, min(1.0, confidence))
@@ -9521,6 +9561,10 @@ class VoiceToMarkdownApp:
     def _apply_enhanced_run_formatting(self, run, format_type, extra_param, document_type):
         """Apply ultra-enhanced formatting dengan AI-powered styling dan adaptive colors."""
 
+         # Normalize document_type if it's a dictionary
+        if isinstance(document_type, dict):
+            document_type = document_type.get("content_type", "general")
+
         # ===== ADVANCED DOCUMENT TYPE COLOR SCHEMES =====
         color_schemes = {
             "technical_report": {
@@ -10641,7 +10685,6 @@ class VoiceToMarkdownApp:
                 return None
 
     # Additional helper methods for the enhanced functionality
-
     def finalize_document_formatting_enhanced(self, doc, content_stats=None):
         """
         Apply comprehensive final formatting touches to the document with advanced styling,
@@ -11625,7 +11668,6 @@ class VoiceToMarkdownApp:
                 return None
 
     # ===== HELPER METHODS =====
-
     def _get_border_specifications(self, callout_type, document_type, priority, border_color):
         """Generate border specifications based on callout and document type."""
         specs = {}
@@ -13848,7 +13890,6 @@ class VoiceToMarkdownApp:
                     # Close matplotlib
                     if hasattr(self, 'viz_fig'):
                         try:
-                            import matplotlib.pyplot as plt
                             plt.close(self.viz_fig)
                         except:
                             pass
