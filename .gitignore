@@ -173,5 +173,20 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-#github chat
-.github
+# EchoScribe AI specific files
+echoscribe.log
+*.log
+temp/
+demo_*.py
+test_integration.py
+
+# User configuration and API keys
+~/.echoscribe/
+
+# Audio test output files
+*.wav
+*.mp3
+*.m4a
+
+# GitHub Copilot instructions (keep local only)
+#.github

@@ -1,0 +1,34 @@
+# EchoScribe AI - Requirements
+# Core dependencies for the modular version
+
+# UI Framework
+customtkinter>=5.2.0
+tkinter  # Usually included with Python
+
+# Audio Processing
+soundcard>=0.4.2
+numpy>=1.21.0
+pyaudio>=0.2.11
+pydub>=0.25.1
+
+# AI and Transcription
+groq>=0.4.1
+
+# Document Processing
+python-docx>=0.8.11
+markdown>=3.4.0
+
+# System Integration
+pathlib  # Usually included with Python
+threading  # Usually included with Python
+logging  # Usually included with Python
+json  # Usually included with Python
+
+# Optional dependencies
+matplotlib>=3.5.0  # For audio visualization
+pillow>=8.0.0  # For image processing
+
+# Development dependencies (optional)
+pytest>=7.0.0
+black>=22.0.0
+pylint>=2.15.0
