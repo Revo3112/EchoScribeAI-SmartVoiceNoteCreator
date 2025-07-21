@@ -1433,11 +1433,51 @@ Versi 2.0 Enhanced"""
                 messagebox.showerror("Error", "Invalid API key format. Must start with 'gsk_'")
 
     def _select_output_folder(self):
-        """Select output folder."""
-        folder = filedialog.askdirectory(title="Select Output Folder")
-        if folder:
-            self.app.set_config_value("output_folder", folder)
-            self.folder_button.configure(text=f"...{folder[-20:]}")
+        """
+        Select output folder with threading to prevent UI freezing.
+        """
+        # Disable the button to prevent multiple clicks
+        self.folder_button.configure(state="disabled")
+        self._update_status("Opening folder dialog...")
+
+        def select_folder_thread():
+            try:
+                # Get initial directory from config
+                initial_dir = self.app.get_config_value("output_folder", str(Path.home()))
+
+                # Create temporary Tk window for file dialog to prevent UI freezing
+                temp_root = tk.Tk()
+                temp_root.withdraw()
+
+                # Open folder dialog
+                folder = filedialog.askdirectory(
+                    master=temp_root,
+                    title="Select Output Folder",
+                    initialdir=initial_dir
+                )
+
+                # Destroy temporary window
+                temp_root.destroy()
+
+                # Update UI in main thread
+                if folder:
+                    self.root.after(0, lambda: self.app.set_config_value("output_folder", folder))
+                    self.root.after(0, lambda: self.folder_button.configure(text=f"...{folder[-20:]}"))
+                    self.root.after(0, lambda: self._update_status(f"Selected folder: {os.path.basename(folder)}"))
+                else:
+                    self.root.after(0, lambda: self._update_status("Folder selection cancelled"))
+
+                # Re-enable button
+                self.root.after(0, lambda: self.folder_button.configure(state="normal"))
+
+            except Exception as e:
+                # Handle errors in main thread
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to select folder: {e}"))
+                self.root.after(0, lambda: self._update_status("Error selecting folder"))
+                self.root.after(0, lambda: self.folder_button.configure(state="normal"))
+
+        # Run in background thread
+        threading.Thread(target=select_folder_thread, daemon=True).start()
 
     def _open_output_folder(self):
         """

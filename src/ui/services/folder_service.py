@@ -49,13 +49,6 @@ class FolderService:
             Selected folder path or None if cancelled
         """
         try:
-            # Create root window if not provided
-            if parent_window is None:
-                root = tk.Tk()
-                root.withdraw()
-            else:
-                root = parent_window
-
             # Configure dialog options
             options = {
                 'title': 'Select Folder for EchoScribe AI',
@@ -63,12 +56,16 @@ class FolderService:
                 'initialdir': self.get_last_folder() or os.path.expanduser('~')
             }
 
-            # Show folder dialog
-            folder_path = filedialog.askdirectory(**options)
+            # Create a new root window for the file dialog to prevent UI freezing
+            # This is critical for preventing the UI from becoming unresponsive
+            temp_root = tk.Tk()
+            temp_root.withdraw()
 
-            # Clean up temporary root if created
-            if parent_window is None and 'root' in locals():
-                root.destroy()
+            # Show folder dialog with the temporary root
+            folder_path = filedialog.askdirectory(master=temp_root, **options)
+
+            # Always clean up the temporary root to prevent memory leaks
+            temp_root.destroy()
 
             if folder_path:
                 self.add_recent_folder(folder_path)
@@ -77,7 +74,8 @@ class FolderService:
             return None
 
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to open folder dialog: {str(e)}")
+            # Handle the error without blocking the UI
+            print(f"Error in folder dialog: {e}")
             return None
 
     def add_recent_folder(self, folder_path: str) -> None:
@@ -140,11 +138,33 @@ class FolderService:
             if not folder.is_dir():
                 return {"files": [], "folders": []}
 
-            files = [f.name for f in folder.iterdir() if f.is_file()]
-            folders = [f.name for f in folder.iterdir() if f.is_dir()]
+            # Use os.scandir which is more efficient than path.iterdir()
+            # This significantly improves performance for large directories
+            files = []
+            folders = []
+
+            # Limit the number of items to prevent excessive memory usage and UI lag
+            max_items = 1000  # Reasonable limit to prevent UI freezing
+            item_count = 0
+
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    item_count += 1
+                    if item_count > max_items:
+                        # Add an indicator that the list was truncated
+                        files.append("... (additional files not shown)")
+                        break
+
+                    if entry.is_file():
+                        files.append(entry.name)
+                    elif entry.is_dir():
+                        folders.append(entry.name)
 
             return {"files": sorted(files), "folders": sorted(folders)}
 
+        except PermissionError:
+            # Handle permission errors gracefully
+            return {"files": [], "folders": ["(Permission denied)"]}
         except Exception as e:
             print(f"Error getting folder contents: {e}")
             return {"files": [], "folders": []}
@@ -174,16 +194,48 @@ class FolderService:
         return True, ""
 
     def get_folder_size(self, folder_path: str) -> int:
-        """Get total size of folder in bytes"""
+        """
+        Get total size of folder in bytes
+        Uses a more efficient algorithm with limits to prevent UI freezing
+        """
         try:
+            # Set reasonable limits to prevent UI freezing
+            max_files_to_check = 1000  # Limit file count
+            max_depth = 3  # Limit directory depth
+            file_count = 0
             total_size = 0
-            for dirpath, dirnames, filenames in os.walk(folder_path):
-                for filename in filenames:
-                    filepath = os.path.join(dirpath, filename)
-                    if os.path.exists(filepath):
-                        total_size += os.path.getsize(filepath)
+
+            # Function to calculate size with limits
+            def fast_folder_size(path, depth=0):
+                nonlocal file_count, total_size
+
+                # Stop if we've reached our limits
+                if depth > max_depth or file_count >= max_files_to_check:
+                    return
+
+                try:
+                    with os.scandir(path) as entries:
+                        for entry in entries:
+                            if file_count >= max_files_to_check:
+                                return
+
+                            if entry.is_file():
+                                file_count += 1
+                                try:
+                                    total_size += entry.stat().st_size
+                                except (OSError, PermissionError):
+                                    pass  # Skip files we can't access
+                            elif entry.is_dir():
+                                fast_folder_size(entry.path, depth + 1)
+                except (PermissionError, OSError):
+                    pass  # Skip directories we can't access
+
+            # Start the calculation
+            fast_folder_size(folder_path)
             return total_size
-        except Exception:
+
+        except Exception as e:
+            print(f"Error calculating folder size: {e}")
             return 0
 
     def get_folder_info(self, folder_path: str) -> Dict[str, Any]:
